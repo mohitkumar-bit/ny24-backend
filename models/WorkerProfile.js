@@ -60,6 +60,20 @@ const workerProfileSchema = new mongoose.Schema(
       default: true,
     },
 
+    age: {
+      type: Number,
+    },
+
+    gender: {
+      type: String,
+      enum: ["Male", "Female", "Other"],
+    },
+
+    interestedInLongDistance: {
+      type: Boolean,
+      default: false,
+    },
+
     isVerified: {
       type: Boolean,
       default: false,

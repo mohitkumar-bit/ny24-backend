@@ -27,11 +27,17 @@ const createJob = async (req, res) => {
 
 const getJobs = async (req, res) => {
   try {
-    const { category, city } = req.query;
+    const { category, city, search } = req.query;
     let query = {};
     
     if (category) query.categories = { $in: [category] };
     if (city) query["location.city"] = new RegExp(city, "i");
+    if (search) {
+      query.$or = [
+        { title: new RegExp(search, "i") },
+        { description: new RegExp(search, "i") }
+      ];
+    }
 
     const jobs = await JobPost.find(query)
       .populate("author", "name phone")

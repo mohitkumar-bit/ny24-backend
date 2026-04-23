@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import WorkerProfile from "../models/WorkerProfile.js";
 import User from "../models/authModal.js";
 
@@ -5,12 +6,12 @@ const createWorkerProfile = async (req, res) => {
   try {
     const userId = req.user.id;
     const { 
-      title, 
-      description, 
-      skills, 
       experience, 
       hourlyRate, 
-      location 
+      location,
+      age,
+      gender,
+      interestedInLongDistance
     } = req.body;
 
     const existingProfile = await WorkerProfile.findOne({ user: userId });
@@ -25,7 +26,10 @@ const createWorkerProfile = async (req, res) => {
       skills,
       experience,
       hourlyRate,
-      location
+      location,
+      age,
+      gender,
+      interestedInLongDistance
     });
 
     // Update User status
@@ -44,15 +48,54 @@ const createWorkerProfile = async (req, res) => {
 
 const getWorkers = async (req, res) => {
   try {
-    const { category, city } = req.query;
+    const { 
+      category, 
+      city, 
+      minPrice, 
+      maxPrice, 
+      gender, 
+      interestedInLongDistance,
+      minAge,
+      maxAge 
+    } = req.query;
+    
+    console.log("SEARCH WORKERS PARAMS 👉", { 
+      category, city, minPrice, maxPrice, gender, interestedInLongDistance, minAge, maxAge 
+    });
     let query = {};
 
-    if (category) {
-      query.skills = category;
+    if (category && mongoose.Types.ObjectId.isValid(category)) {
+      query.skills = { $in: [new mongoose.Types.ObjectId(category)] };
     }
     if (city) {
       query["location.city"] = new RegExp(city, "i");
     }
+
+    // Price Filter
+    if (minPrice || maxPrice) {
+      query.hourlyRate = {};
+      if (minPrice) query.hourlyRate.$gte = Number(minPrice);
+      if (maxPrice) query.hourlyRate.$lte = Number(maxPrice);
+    }
+
+    // Gender Filter
+    if (gender) {
+      query.gender = gender;
+    }
+
+    // Long Distance Filter
+    if (interestedInLongDistance === 'true') {
+      query.interestedInLongDistance = true;
+    }
+
+    // Age Filter
+    if (minAge || maxAge) {
+      query.age = {};
+      if (minAge) query.age.$gte = Number(minAge);
+      if (maxAge) query.age.$lte = Number(maxAge);
+    }
+    
+    console.log("GENERATED QUERY 👉", query);
 
     const workers = await WorkerProfile.find(query)
       .populate("user", "name email phone")
@@ -93,7 +136,11 @@ const updateWorkerProfile = async (req, res) => {
       skills, 
       experience, 
       hourlyRate, 
-      location 
+      location,
+      availability,
+      age,
+      gender,
+      interestedInLongDistance
     } = req.body;
 
     const profile = await WorkerProfile.findOneAndUpdate(
@@ -105,11 +152,15 @@ const updateWorkerProfile = async (req, res) => {
           skills,
           experience,
           hourlyRate,
-          location
+          location,
+          availability,
+          age,
+          gender,
+          interestedInLongDistance
         }
       },
       { new: true }
-    );
+    ).populate("skills", "name icon");
 
     if (!profile) {
       return res.status(404).json({ message: "Worker profile not found" });
@@ -126,4 +177,22 @@ const updateWorkerProfile = async (req, res) => {
   }
 };
 
-export { createWorkerProfile, getWorkers, getMyWorkerProfile, updateWorkerProfile };
+const getWorkerById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const profile = await WorkerProfile.findById(id)
+      .populate("user", "name email phone")
+      .populate("skills", "name icon");
+
+    if (!profile) {
+      return res.status(404).json({ message: "Worker profile not found" });
+    }
+
+    res.status(200).json(profile);
+  } catch (error) {
+    console.error("GET WORKER BY ID ERROR 👉", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+export { createWorkerProfile, getWorkers, getMyWorkerProfile, updateWorkerProfile, getWorkerById };
