@@ -8,6 +8,8 @@ import jobRoutes from "./routes/jobRoutes.js";
 import applicationRoutes from "./routes/applicationRoutes.js";
 import categoryRoutes from "./routes/categoryRoutes.js";
 import savedRoutes from "./routes/savedRoutes.js";
+import subscriptionRoutes from "./routes/subscriptionRoutes.js";
+import chatRoutes from "./routes/chatRoutes.js";
 import connectDB from "./utils/db.js";
 import { seedCategories } from "./controllers/categoryController.js";
 
@@ -31,6 +33,8 @@ app.use("/api/job", jobRoutes);
 app.use("/api/saved", savedRoutes);
 app.use("/api/application", applicationRoutes);
 app.use("/api/category", categoryRoutes);
+app.use("/api/subscription", subscriptionRoutes);
+app.use("/api/chat", chatRoutes);
 
 const PORT = process.env.PORT || 4000;
 

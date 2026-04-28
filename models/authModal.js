@@ -67,6 +67,11 @@ const userSchema = new mongoose.Schema(
       },
     ],
 
+    subscription: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Subscription",
+    },
+
     refreshToken: {
       type: String,
     },

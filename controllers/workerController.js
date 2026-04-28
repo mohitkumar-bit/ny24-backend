@@ -6,6 +6,9 @@ const createWorkerProfile = async (req, res) => {
   try {
     const userId = req.user.id;
     const { 
+      title,
+      description,
+      skills,
       experience, 
       hourlyRate, 
       location,
