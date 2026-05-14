@@ -1,9 +1,24 @@
 import JobPost from "../models/JobPost.js";
+import User from "../models/authModal.js";
 
 const createJob = async (req, res) => {
   try {
     const { title, description, categories, price, location } = req.body;
     const authorId = req.user.id;
+
+    // Check subscription and post limit
+    const user = await User.findById(authorId).populate("subscription");
+    const isSubscribed = user?.subscription?.status === "active";
+
+    if (!isSubscribed) {
+      const postCount = await JobPost.countDocuments({ author: authorId });
+      if (postCount >= 2) {
+        return res.status(403).json({ 
+          success: false,
+          message: "Free plan limit reached. You can only create 2 job posts. Upgrade to Pro to post more." 
+        });
+      }
+    }
 
     const job = await JobPost.create({
       author: authorId,

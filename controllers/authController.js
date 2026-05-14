@@ -70,7 +70,7 @@ const login = async (req, res) => {
       return res.status(400).json({ message: "Email and password required" });
     }
 
-    const user = await User.findOne({ email }).select("+password");
+    const user = await User.findOne({ email }).select("+password").populate("subscription");
     if (!user) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
@@ -107,6 +107,7 @@ const login = async (req, res) => {
         email: user.email,
         role: user.role,
         isWorker: user.isWorker,
+        subscription: user.subscription
       },
       accessToken,
       refreshToken,
@@ -169,7 +170,7 @@ const refreshAccessToken = async (req, res) => {
 
 const getProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user.id).populate("subscription");
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
@@ -183,7 +184,8 @@ const getProfile = async (req, res) => {
         phone: user.phone,
         bio: user.bio,
         location: user.location?.address,
-        isWorker: user.isWorker
+        isWorker: user.isWorker,
+        subscription: user.subscription
       } 
     });
   } catch (error) {
@@ -211,7 +213,7 @@ const updateProfile = async (req, res) => {
       userId,
       { $set: updateData },
       { new: true }
-    );
+    ).populate("subscription");
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -227,7 +229,8 @@ const updateProfile = async (req, res) => {
         phone: user.phone,
         bio: user.bio,
         location: user.location?.address,
-        isWorker: user.isWorker
+        isWorker: user.isWorker,
+        subscription: user.subscription
       },
     });
   } catch (error) {

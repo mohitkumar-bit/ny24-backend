@@ -71,6 +71,13 @@ const userSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Subscription",
     },
+    
+    pinnedConversations: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Conversation",
+      },
+    ],
 
     refreshToken: {
       type: String,

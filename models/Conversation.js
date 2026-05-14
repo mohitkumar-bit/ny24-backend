@@ -16,5 +16,8 @@ const conversationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Removed TTL index to allow conditional expiration for free/pro users
+// conversationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 86400 });
+
 const Conversation = mongoose.model("Conversation", conversationSchema);
 export default Conversation;

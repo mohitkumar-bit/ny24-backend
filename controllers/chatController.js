@@ -150,10 +150,18 @@ export const checkChatLimit = async (req, res) => {
 export const getConversations = async (req, res) => {
   try {
     const userId = req.user.id;
+    const userProfile = await User.findById(userId).populate("subscription");
+    const isSubscribed = userProfile?.subscription?.status === 'active';
 
-    const conversations = await Conversation.find({
-      participants: userId,
-    })
+    let query = { participants: userId };
+    
+    // Only apply 24h filter if user is NOT subscribed
+    if (!isSubscribed) {
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      query.createdAt = { $gte: twentyFourHoursAgo };
+    }
+
+    const conversations = await Conversation.find(query)
       .populate({
         path: "participants",
         select: "name email phone",
@@ -161,18 +169,34 @@ export const getConversations = async (req, res) => {
       .populate("lastMessage")
       .sort({ updatedAt: -1 });
 
-    // Filter out the current user from participants list for frontend convenience
-    const formattedConversations = conversations.map((conv) => {
+    // Get user to check pinned chats
+    const user = await User.findById(userId).select("pinnedConversations");
+    const pinnedIds = user.pinnedConversations.map(id => id.toString());
+
+    // Filter out the current user from participants list and add isPinned flag + unreadCount
+    const formattedConversations = await Promise.all(conversations.map(async (conv) => {
       const otherUser = conv.participants.find(
         (p) => p._id.toString() !== userId
       );
+      
+      const unreadCount = await Message.countDocuments({
+        conversationId: conv._id,
+        receiver: userId,
+        isRead: false
+      });
+
       return {
         ...conv._doc,
         otherUser,
+        isPinned: pinnedIds.includes(conv._id.toString()),
+        unreadCount
       };
-    });
+    }));
 
-    res.json(formattedConversations);
+    res.json({ 
+      conversations: formattedConversations, 
+      isSubscribed 
+    });
   } catch (error) {
     console.error("Error fetching conversations:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -206,9 +230,42 @@ export const getMessages = async (req, res) => {
     }
 
     const messages = await Message.find({ conversationId: targetConversationId }).sort({ createdAt: 1 });
+    
+    // Mark as read
+    await Message.updateMany(
+      { conversationId: targetConversationId, receiver: userId, isRead: false },
+      { $set: { isRead: true } }
+    );
+
     res.json(messages);
   } catch (error) {
     console.error("Error fetching messages:", error);
     res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const togglePinConversation = async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const userId = req.user.id;
+
+    const user = await User.findById(userId);
+    const isPinned = user.pinnedConversations.includes(conversationId);
+
+    if (isPinned) {
+      // Unpin
+      user.pinnedConversations = user.pinnedConversations.filter(
+        (id) => id.toString() !== conversationId
+      );
+    } else {
+      // Pin
+      user.pinnedConversations.push(conversationId);
+    }
+
+    await user.save();
+    res.json({ message: isPinned ? "Unpinned" : "Pinned", isPinned: !isPinned });
+  } catch (error) {
+    console.error("Error toggling pin:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
