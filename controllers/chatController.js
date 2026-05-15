@@ -157,8 +157,13 @@ export const getConversations = async (req, res) => {
     
     // Only apply 24h filter if user is NOT subscribed
     if (!isSubscribed) {
+      const user = await User.findById(userId).select("pinnedConversations");
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      query.createdAt = { $gte: twentyFourHoursAgo };
+      
+      query.$or = [
+        { updatedAt: { $gte: twentyFourHoursAgo } },
+        { _id: { $in: user.pinnedConversations } }
+      ];
     }
 
     const conversations = await Conversation.find(query)
