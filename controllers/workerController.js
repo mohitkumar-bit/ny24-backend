@@ -51,6 +51,7 @@ const createWorkerProfile = async (req, res) => {
 
 const getWorkers = async (req, res) => {
   try {
+    const userId = req.user.id;
     const { 
       category, 
       city, 
@@ -62,10 +63,9 @@ const getWorkers = async (req, res) => {
       maxAge 
     } = req.query;
     
-    console.log("SEARCH WORKERS PARAMS 👉", { 
-      category, city, minPrice, maxPrice, gender, interestedInLongDistance, minAge, maxAge 
-    });
-    let query = {};
+    let query = {
+      user: { $ne: userId },
+    };
 
     if (category && mongoose.Types.ObjectId.isValid(category)) {
       query.skills = { $in: [new mongoose.Types.ObjectId(category)] };
@@ -98,8 +98,6 @@ const getWorkers = async (req, res) => {
       if (maxAge) query.age.$lte = Number(maxAge);
     }
     
-    console.log("GENERATED QUERY 👉", query);
-
     const workers = await WorkerProfile.find(query)
       .populate("user", "name email phone")
       .populate("skills", "name");

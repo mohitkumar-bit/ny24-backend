@@ -79,6 +79,24 @@ const userSchema = new mongoose.Schema(
       },
     ],
 
+    chatSlots: [
+      {
+        conversationId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Conversation",
+          required: true,
+        },
+        openedAt: {
+          type: Date,
+          required: true,
+        },
+        expiresAt: {
+          type: Date,
+          default: null,
+        },
+      },
+    ],
+
     refreshToken: {
       type: String,
     },
