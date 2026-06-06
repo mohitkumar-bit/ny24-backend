@@ -10,6 +10,9 @@ import categoryRoutes from "./routes/categoryRoutes.js";
 import savedRoutes from "./routes/savedRoutes.js";
 import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import chatRoutes from "./routes/chatRoutes.js";
+import verificationRoutes from "./routes/verificationRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
+import callRequestRoutes from "./routes/callRequestRoutes.js";
 import connectDB from "./utils/db.js";
 import { seedCategories } from "./controllers/categoryController.js";
 
@@ -35,6 +38,9 @@ app.use("/api/application", applicationRoutes);
 app.use("/api/category", categoryRoutes);
 app.use("/api/subscription", subscriptionRoutes);
 app.use("/api/chat", chatRoutes);
+app.use("/api/verification", verificationRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/call-request", callRequestRoutes);
 
 const PORT = process.env.PORT || 4000;
 

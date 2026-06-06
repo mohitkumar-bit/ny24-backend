@@ -32,6 +32,21 @@ const jobPostSchema = new mongoose.Schema(
       city: String,
       state: String,
     },
+    requirements: {
+      gender: {
+        type: String,
+        enum: ["Any", "Male", "Female"],
+        default: "Any",
+      },
+      minAge: {
+        type: Number,
+        default: null,
+      },
+      maxAge: {
+        type: Number,
+        default: null,
+      },
+    },
     status: {
       type: String,
       enum: ["open", "closed", "in-progress"],

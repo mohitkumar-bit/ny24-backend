@@ -5,7 +5,7 @@ import authMiddleware from "../middleware/authMiddleware.js";
 const router = express.Router();
 
 router.post("/", authMiddleware, createJob);
-router.get("/", getJobs);
+router.get("/", authMiddleware, getJobs);
 router.get("/me", authMiddleware, getMyJobs);
 router.get("/:id", getJobById);
 router.put("/:id", authMiddleware, updateJob);

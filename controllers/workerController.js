@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import WorkerProfile from "../models/WorkerProfile.js";
 import User from "../models/authModal.js";
+import { distanceKm, hasValidCoordinates, resolveWorkerCoordinates } from "../utils/distance.js";
 
 const createWorkerProfile = async (req, res) => {
   try {
@@ -98,11 +99,88 @@ const getWorkers = async (req, res) => {
       if (maxAge) query.age.$lte = Number(maxAge);
     }
     
-    const workers = await WorkerProfile.find(query)
-      .populate("user", "name email phone")
-      .populate("skills", "name");
+    const [currentUser, workersRaw] = await Promise.all([
+      User.findById(userId).select("location"),
+      WorkerProfile.find(query)
+        .populate({
+          path: "user",
+          select: "name email phone isVerified location subscription",
+          populate: { path: "subscription", select: "plan status" },
+        })
+        .populate("skills", "name"),
+    ]);
 
-    res.status(200).json(workers);
+    const userCoords = currentUser?.location?.coordinates;
+    const hasUserCoords = hasValidCoordinates(userCoords);
+
+    const userLng = hasUserCoords ? userCoords[0] : null;
+    const userLat = hasUserCoords ? userCoords[1] : null;
+
+    const skillMatchScore = category ? 1 : 0.6;
+
+    const ranked = workersRaw.map((wDoc) => {
+      const w = wDoc.toObject ? wDoc.toObject() : wDoc;
+
+      const coords = resolveWorkerCoordinates(w);
+      const km = hasUserCoords && hasValidCoordinates(coords)
+        ? distanceKm(userLat, userLng, coords[1], coords[0])
+        : null;
+
+      const distanceScore =
+        km == null ? 0.05 : Math.max(0, 1 - km / 30); // 0..1 (30km cap)
+
+      const ratingScore = w.rating && w.rating > 0 ? w.rating / 5 : 0.5;
+      const reviewsScore =
+        w.totalReviews && w.totalReviews > 0
+          ? Math.min(1, Math.log10(w.totalReviews + 1) / 2)
+          : 0.1;
+
+      const completenessScore =
+        (w.title ? 0.25 : 0) +
+        (w.description ? 0.25 : 0) +
+        (Array.isArray(w.skills) && w.skills.length ? 0.25 : 0) +
+        (Array.isArray(w.images) && w.images.length ? 0.25 : 0);
+
+      const userSub = w.user?.subscription;
+      const isPremium =
+        userSub?.status === "active" && ["pro", "business"].includes(userSub?.plan);
+
+      // Premium boost is distance-weighted, so premium far away won't beat near free.
+      const premiumBoost = isPremium ? 80 * distanceScore : 0;
+
+      const score =
+        100 * skillMatchScore +
+        50 * distanceScore +
+        25 * ratingScore +
+        15 * reviewsScore +
+        10 * completenessScore +
+        premiumBoost;
+
+      const distanceKmRounded = km == null ? null : Math.round(km * 10) / 10;
+      const isFeatured = isPremium && distanceKmRounded != null && distanceKmRounded <= 15;
+
+      return {
+        ...w,
+        distanceKm: distanceKmRounded,
+        isFeatured,
+        rankingScore: score,
+      };
+    });
+
+    const featured = ranked
+      .filter((w) => w.isFeatured)
+      .sort((a, b) => b.rankingScore - a.rankingScore)
+      .slice(0, 8);
+
+    const organic = ranked
+      .filter((w) => !w.isFeatured)
+      .sort((a, b) => b.rankingScore - a.rankingScore);
+
+    // Remove rankingScore before sending (optional, but keeps payload clean)
+    const cleanedFeatured = featured.map(({ rankingScore, ...rest }) => rest);
+    const cleanedOrganic = organic.map(({ rankingScore, ...rest }) => rest);
+
+    res.status(200).json([...cleanedFeatured, ...cleanedOrganic]);
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
@@ -112,6 +190,7 @@ const getMyWorkerProfile = async (req, res) => {
   try {
     const userId = req.user.id;
     const profile = await WorkerProfile.findOne({ user: userId })
+      .populate("user", "name isVerified")
       .populate("skills", "name icon");
 
     if (!profile) {
@@ -182,7 +261,7 @@ const getWorkerById = async (req, res) => {
   try {
     const { id } = req.params;
     const profile = await WorkerProfile.findById(id)
-      .populate("user", "name email phone")
+      .populate("user", "name email phone isVerified")
       .populate("skills", "name icon");
 
     if (!profile) {

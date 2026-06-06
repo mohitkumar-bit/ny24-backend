@@ -103,7 +103,26 @@ const userSchema = new mongoose.Schema(
 
     lastLoginAt: {
       type: Date,
-    }
+    },
+
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    verification: {
+      status: {
+        type: String,
+        enum: ["none", "pending", "approved", "rejected"],
+        default: "none",
+      },
+      submittedAt: Date,
+      reviewedAt: Date,
+      selfieUrl: String,
+      aadhaarUrl: String,
+      panUrl: String,
+      rejectionReason: String,
+    },
   },
 
   { timestamps: true }

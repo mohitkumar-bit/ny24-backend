@@ -21,6 +21,15 @@ const messageSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    messageType: {
+      type: String,
+      enum: ["text", "call_request"],
+      default: "text",
+    },
+    callRequestStatus: {
+      type: String,
+      enum: ["pending", "accepted", "declined"],
+    },
     isRead: {
       type: Boolean,
       default: false,

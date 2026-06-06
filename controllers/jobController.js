@@ -1,9 +1,10 @@
 import JobPost from "../models/JobPost.js";
 import User from "../models/authModal.js";
+import { distanceKm, hasValidCoordinates } from "../utils/distance.js";
 
 const createJob = async (req, res) => {
   try {
-    const { title, description, categories, price, location } = req.body;
+    const { title, description, categories, price, location, requirements } = req.body;
     const authorId = req.user.id;
 
     // Check subscription and post limit
@@ -26,7 +27,14 @@ const createJob = async (req, res) => {
       description,
       categories,
       price,
-      location
+      location,
+      requirements: {
+        gender: requirements?.gender || "Any",
+        minAge:
+          typeof requirements?.minAge === "number" ? requirements.minAge : null,
+        maxAge:
+          typeof requirements?.maxAge === "number" ? requirements.maxAge : null,
+      },
     });
 
     res.status(201).json({
@@ -42,7 +50,15 @@ const createJob = async (req, res) => {
 
 const getJobs = async (req, res) => {
   try {
-    const { category, city, search } = req.query;
+    const { category, city, search, verifiedOnly } = req.query;
+    const userId = req.user.id;
+
+    const currentUser = await User.findById(userId).select("location");
+    const userCoords = currentUser?.location?.coordinates;
+    const hasUserCoords = hasValidCoordinates(userCoords);
+    const userLng = hasUserCoords ? userCoords[0] : null;
+    const userLat = hasUserCoords ? userCoords[1] : null;
+
     let query = {};
     
     if (category) query.categories = { $in: [category] };
@@ -55,11 +71,78 @@ const getJobs = async (req, res) => {
     }
 
     const jobs = await JobPost.find(query)
-      .populate("author", "name phone")
+      .populate({
+        path: "author",
+        select: "name phone isVerified location subscription",
+        populate: { path: "subscription", select: "plan status" },
+      })
       .populate("categories", "name icon")
-      .sort("-createdAt");
+      ;
 
-    res.status(200).json(jobs);
+    const skillMatchScore = category ? 1 : 0.6;
+
+    const ranked = jobs.map((jobDoc) => {
+      const job = jobDoc.toObject ? jobDoc.toObject() : jobDoc;
+      const authorCoords = job.author?.location?.coordinates;
+      const isVerifiedAuthor = !!job.author?.isVerified;
+
+      const km =
+        hasUserCoords && hasValidCoordinates(authorCoords)
+          ? distanceKm(userLat, userLng, authorCoords[1], authorCoords[0])
+          : null;
+
+      const distanceScore = km == null ? 0.05 : Math.max(0, 1 - km / 40); // 0..1 (40km cap)
+
+      const authorSub = job.author?.subscription;
+      const isPremium =
+        authorSub?.status === "active" && ["pro", "business"].includes(authorSub?.plan);
+
+      const premiumBoost = isPremium ? 80 * distanceScore : 0;
+
+      const ageHours = job.createdAt
+        ? (Date.now() - new Date(job.createdAt).getTime()) / (1000 * 60 * 60)
+        : 999;
+      const recencyScore = Math.max(0, 1 - ageHours / 72) * 25;
+
+      const verifiedBoost =
+        verifiedOnly === "true" && isVerifiedAuthor ? 40 * distanceScore : 0;
+
+      const rankingScore =
+        100 * skillMatchScore +
+        60 * distanceScore +
+        premiumBoost +
+        recencyScore +
+        verifiedBoost;
+
+      const isFeatured = isPremium && km != null && km <= 15;
+
+      return {
+        ...job,
+        distanceKm: km == null ? null : Math.round(km * 10) / 10,
+        isFeatured,
+        isVerifiedAuthor,
+        rankingScore,
+      };
+    });
+
+    const filteredRanked =
+      verifiedOnly === "true"
+        ? ranked.filter((j) => j.isVerifiedAuthor)
+        : ranked;
+
+    const featured = filteredRanked
+      .filter((j) => j.isFeatured)
+      .sort((a, b) => b.rankingScore - a.rankingScore)
+      .slice(0, 10);
+
+    const organic = filteredRanked
+      .filter((j) => !j.isFeatured)
+      .sort((a, b) => b.rankingScore - a.rankingScore);
+
+    const cleanedFeatured = featured.map(({ rankingScore, ...rest }) => rest);
+    const cleanedOrganic = organic.map(({ rankingScore, ...rest }) => rest);
+
+    res.status(200).json([...cleanedFeatured, ...cleanedOrganic]);
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
@@ -68,7 +151,7 @@ const getJobs = async (req, res) => {
 const getJobById = async (req, res) => {
   try {
     const job = await JobPost.findById(req.params.id)
-      .populate("author", "name phone email")
+      .populate("author", "name phone email isVerified")
       .populate("categories", "name icon");
     
     if (!job) {
@@ -97,7 +180,7 @@ const getMyJobs = async (req, res) => {
 const updateJob = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, description, categories, price, location } = req.body;
+    const { title, description, categories, price, location, requirements } = req.body;
     const userId = req.user.id;
 
     const job = await JobPost.findById(id);
@@ -113,7 +196,28 @@ const updateJob = async (req, res) => {
 
     const updatedJob = await JobPost.findByIdAndUpdate(
       id,
-      { title, description, categories, price, location },
+      {
+        title,
+        description,
+        categories,
+        price,
+        location,
+        ...(requirements
+          ? {
+              requirements: {
+                gender: requirements.gender || "Any",
+                minAge:
+                  typeof requirements.minAge === "number"
+                    ? requirements.minAge
+                    : null,
+                maxAge:
+                  typeof requirements.maxAge === "number"
+                    ? requirements.maxAge
+                    : null,
+              },
+            }
+          : {}),
+      },
       { new: true }
     );
 

@@ -1,6 +1,29 @@
 
 import bcrypt from "bcryptjs";
 import User from "../models/authModal.js";
+import { formatVerificationForClient, hasActiveBusinessPlan } from "../utils/verificationHelpers.js";
+
+const formatUserLocationResponse = (user) => {
+  const loc = user.location;
+  if (!loc?.coordinates?.length) {
+    return { location: loc?.address || null, locationDetails: null };
+  }
+  const display =
+    loc.address ||
+    [loc.city, loc.state].filter(Boolean).join(", ") ||
+    null;
+  return {
+    location: display,
+    locationDetails: {
+      address: loc.address || "",
+      city: loc.city || "",
+      state: loc.state || "",
+      district: loc.district || "",
+      pincode: loc.pincode || "",
+      coordinates: loc.coordinates,
+    },
+  };
+};
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from "../utils/jwt.js";
 
 
@@ -175,6 +198,8 @@ const getProfile = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
     
+    const verification = formatVerificationForClient(user);
+    const { location, locationDetails } = formatUserLocationResponse(user);
     res.status(200).json({ 
       success: true, 
       user: {
@@ -183,8 +208,12 @@ const getProfile = async (req, res) => {
         email: user.email,
         phone: user.phone,
         bio: user.bio,
-        location: user.location?.address,
+        location,
+        locationDetails,
         isWorker: user.isWorker,
+        isVerified: user.isVerified,
+        verificationStatus: verification.status,
+        canVerify: verification.canSubmit && hasActiveBusinessPlan(user),
         subscription: user.subscription
       } 
     });
@@ -195,17 +224,55 @@ const getProfile = async (req, res) => {
 
 const updateProfile = async (req, res) => {
   try {
-    const { name, phone, bio, location } = req.body;
+    const { name, phone, bio, location, locationData } = req.body;
     const userId = req.user.id;
 
-    // Build update object
+    const existingUser = await User.findById(userId);
+    if (!existingUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
     const updateData = { name, phone, bio };
-    
-    // Handle location string by mapping to address field
-    if (location) {
+
+    if (locationData?.coordinates?.length === 2) {
       updateData.location = {
+        type: "Point",
+        coordinates: locationData.coordinates,
+        address: locationData.address || location || "",
+        city: locationData.city || "",
+        state: locationData.state || "",
+        district: locationData.district || "",
+        pincode: locationData.pincode || "",
+      };
+    } else if (
+      locationData &&
+      (locationData.address || locationData.city || locationData.state)
+    ) {
+      const prevCoords =
+        existingUser.location?.coordinates?.length === 2
+          ? existingUser.location.coordinates
+          : [0, 0];
+      updateData.location = {
+        type: "Point",
+        coordinates: prevCoords,
+        address: locationData.address || "",
+        city: locationData.city || "",
+        state: locationData.state || "",
+        district: locationData.district || "",
+        pincode: locationData.pincode || "",
+      };
+    } else if (location !== undefined) {
+      const prevCoords = existingUser.location?.coordinates?.length === 2
+        ? existingUser.location.coordinates
+        : [0, 0];
+      updateData.location = {
+        type: "Point",
+        coordinates: prevCoords,
         address: location,
-        coordinates: [0, 0] // Default coords if not provided
+        city: existingUser.location?.city || "",
+        state: existingUser.location?.state || "",
+        district: existingUser.location?.district || "",
+        pincode: existingUser.location?.pincode || "",
       };
     }
 
@@ -219,6 +286,9 @@ const updateProfile = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
+    const verification = formatVerificationForClient(user);
+    const { location: locDisplay, locationDetails } = formatUserLocationResponse(user);
+
     res.status(200).json({
       success: true,
       message: "Profile updated successfully",
@@ -228,8 +298,12 @@ const updateProfile = async (req, res) => {
         email: user.email,
         phone: user.phone,
         bio: user.bio,
-        location: user.location?.address,
+        location: locDisplay,
+        locationDetails,
         isWorker: user.isWorker,
+        isVerified: user.isVerified,
+        verificationStatus: verification.status,
+        canVerify: verification.canSubmit && hasActiveBusinessPlan(user),
         subscription: user.subscription
       },
     });
