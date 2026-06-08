@@ -123,6 +123,14 @@ const userSchema = new mongoose.Schema(
       panUrl: String,
       rejectionReason: String,
     },
+
+    pushTokens: [
+      {
+        token: { type: String, required: true },
+        device: { type: String, default: "unknown" },
+        updatedAt: { type: Date, default: Date.now },
+      },
+    ],
   },
 
   { timestamps: true }

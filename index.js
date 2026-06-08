@@ -13,8 +13,10 @@ import chatRoutes from "./routes/chatRoutes.js";
 import verificationRoutes from "./routes/verificationRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import callRequestRoutes from "./routes/callRequestRoutes.js";
+import notificationRoutes from "./routes/notificationRoutes.js";
 import connectDB from "./utils/db.js";
 import { seedCategories } from "./controllers/categoryController.js";
+import { seedAdmin } from "./utils/seedAdmin.js";
 
 const app = express();
 
@@ -41,11 +43,13 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/verification", verificationRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/call-request", callRequestRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 const PORT = process.env.PORT || 4000;
 
 app.listen(PORT, async () => {
     await connectDB();
     await seedCategories();
+    await seedAdmin();
     console.log(`Server is running on port ${PORT}`);
 });
