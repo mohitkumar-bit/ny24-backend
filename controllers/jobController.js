@@ -1,10 +1,11 @@
 import JobPost from "../models/JobPost.js";
 import User from "../models/authModal.js";
 import { distanceKm, hasValidCoordinates } from "../utils/distance.js";
+import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.js";
 
 const createJob = async (req, res) => {
   try {
-    const { title, description, categories, price, location, requirements } = req.body;
+    const { title, description, categories, price, location, requirements, images } = req.body;
     const authorId = req.user.id;
 
     // Check subscription and post limit
@@ -21,6 +22,10 @@ const createJob = async (req, res) => {
       }
     }
 
+    const jobImages = Array.isArray(images)
+      ? images.filter((url) => typeof url === "string" && url.trim())
+      : [];
+
     const job = await JobPost.create({
       author: authorId,
       title,
@@ -28,6 +33,7 @@ const createJob = async (req, res) => {
       categories,
       price,
       location,
+      images: jobImages,
       requirements: {
         gender: requirements?.gender || "Any",
         minAge:
@@ -258,4 +264,37 @@ const deleteJob = async (req, res) => {
   }
 };
 
-export { createJob, getJobs, getJobById, getMyJobs, updateJob, deleteJob };
+const uploadJobImageHandler = async (req, res) => {
+  try {
+    if (!isCloudinaryConfigured()) {
+      return res.status(503).json({
+        message: "Image upload is not configured. Add Cloudinary credentials to the server.",
+      });
+    }
+
+    if (!req.file?.buffer) {
+      return res.status(400).json({ message: "Image file is required" });
+    }
+
+    const imageUrl = await uploadToCloudinary(
+      req.file.buffer,
+      req.user.id,
+      "jobs"
+    );
+
+    res.status(200).json({ success: true, imageUrl });
+  } catch (error) {
+    console.error("UPLOAD JOB IMAGE ERROR 👉", error);
+    res.status(500).json({ message: "Failed to upload image" });
+  }
+};
+
+export {
+  createJob,
+  getJobs,
+  getJobById,
+  getMyJobs,
+  updateJob,
+  deleteJob,
+  uploadJobImageHandler,
+};
