@@ -35,6 +35,33 @@ const userSchema = new mongoose.Schema(
       maxlength: 500,
     },
 
+    profilePicture: {
+      type: String,
+      default: null,
+    },
+
+    blockedUsers: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+
+    isBlocked: {
+      type: Boolean,
+      default: false,
+    },
+
+    accountBlockReason: {
+      type: String,
+      default: null,
+    },
+
+    accountBlockedAt: {
+      type: Date,
+      default: null,
+    },
+
     password: {
       type: String,
       required: true,
@@ -99,6 +126,11 @@ const userSchema = new mongoose.Schema(
 
     refreshToken: {
       type: String,
+    },
+
+    activeSessionId: {
+      type: String,
+      default: null,
     },
 
     lastLoginAt: {

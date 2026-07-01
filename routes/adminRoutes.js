@@ -51,6 +51,16 @@ import {
   sendNotification,
   listSentNotifications,
 } from "../controllers/adminNotificationController.js";
+import {
+  listChatReports,
+  dismissChatReport,
+  blockUserFromReport,
+} from "../controllers/adminChatReportController.js";
+import {
+  listConversations,
+  getConversationMessages,
+  getChatHistory,
+} from "../controllers/adminChatController.js";
 
 const router = express.Router();
 
@@ -102,5 +112,13 @@ router.put("/notification-templates/:id", updateTemplate);
 router.delete("/notification-templates/:id", deleteTemplate);
 router.post("/notifications/send", sendNotification);
 router.get("/notifications/sent", listSentNotifications);
+
+router.get("/chat-reports", listChatReports);
+router.post("/chat-reports/:id/dismiss", dismissChatReport);
+router.post("/chat-reports/:id/block-user", blockUserFromReport);
+
+router.get("/chat/conversations", listConversations);
+router.get("/chat/conversations/:id/messages", getConversationMessages);
+router.get("/chat/history", getChatHistory);
 
 export default router;

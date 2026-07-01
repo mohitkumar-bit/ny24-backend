@@ -13,14 +13,19 @@ if (isConfigured()) {
   });
 }
 
-export const uploadToCloudinary = (buffer, folder, basePath = "verification") => {
+export const uploadToCloudinary = (
+  buffer,
+  folder,
+  basePath = "verification",
+  resourceType = "image"
+) => {
   if (!isConfigured()) {
     return Promise.reject(new Error("Cloudinary is not configured"));
   }
 
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder: `ny24/${basePath}/${folder}`, resource_type: "image" },
+      { folder: `ny24/${basePath}/${folder}`, resource_type: resourceType },
       (error, result) => {
         if (error) reject(error);
         else resolve(result.secure_url);

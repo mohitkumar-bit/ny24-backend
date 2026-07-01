@@ -7,6 +7,7 @@ import {
   getSlotInfoForConversation,
   isSubscribed,
 } from "../utils/chatSlots.js";
+import { notifyUser } from "../utils/pushNotifyUser.js";
 
 const createCallRequest = async (req, res) => {
   try {
@@ -100,6 +101,19 @@ const createCallRequest = async (req, res) => {
     await conversation.save();
 
     const slotInfo = getSlotInfoForConversation(user, targetConversationId);
+
+    notifyUser({
+      userId: targetReceiverId,
+      title: requester?.name || "Call request",
+      body: "Sent you a call request",
+      type: "chat",
+      channelId: "chat",
+      data: {
+        type: "chat",
+        conversationId: targetConversationId.toString(),
+        senderId: requesterId.toString(),
+      },
+    });
 
     res.status(201).json({
       success: true,

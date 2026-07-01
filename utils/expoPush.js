@@ -38,7 +38,7 @@ export const sendExpoPushNotifications = async (messages) => {
   return { success: true, sent };
 };
 
-export const buildPushMessages = (tokens, { title, body, data = {} }) => {
+export const buildPushMessages = (tokens, { title, body, data = {}, channelId = "default" }) => {
   const uniqueTokens = [...new Set(tokens.filter(Boolean))];
   return uniqueTokens.map((token) => ({
     to: token,
@@ -46,5 +46,7 @@ export const buildPushMessages = (tokens, { title, body, data = {} }) => {
     title,
     body,
     data,
+    priority: "high",
+    channelId,
   }));
 };

@@ -3,6 +3,21 @@ import WorkerProfile from "../models/WorkerProfile.js";
 import User from "../models/authModal.js";
 import { distanceKm, hasValidCoordinates, resolveWorkerCoordinates } from "../utils/distance.js";
 
+const normalizeSkillIds = (skills) => {
+  if (!skills) return [];
+  const list = Array.isArray(skills) ? skills : [skills];
+  const unique = new Set();
+
+  for (const item of list) {
+    const raw = typeof item === "object" && item?._id ? String(item._id) : String(item);
+    if (mongoose.Types.ObjectId.isValid(raw)) {
+      unique.add(raw);
+    }
+  }
+
+  return Array.from(unique).map((id) => new mongoose.Types.ObjectId(id));
+};
+
 const createWorkerProfile = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -23,11 +38,16 @@ const createWorkerProfile = async (req, res) => {
       return res.status(400).json({ message: "Worker profile already exists" });
     }
 
+    const skillIds = normalizeSkillIds(skills);
+    if (skillIds.length === 0) {
+      return res.status(400).json({ message: "At least one skill is required" });
+    }
+
     const workerProfile = await WorkerProfile.create({
       user: userId,
       title,
       description,
-      skills,
+      skills: skillIds,
       experience,
       hourlyRate,
       location,
@@ -223,13 +243,18 @@ const updateWorkerProfile = async (req, res) => {
       interestedInLongDistance
     } = req.body;
 
+    const skillIds = normalizeSkillIds(skills);
+    if (skillIds.length === 0) {
+      return res.status(400).json({ message: "At least one skill is required" });
+    }
+
     const profile = await WorkerProfile.findOneAndUpdate(
       { user: userId },
       { 
         $set: {
           title,
           description,
-          skills,
+          skills: skillIds,
           experience,
           hourlyRate,
           location,

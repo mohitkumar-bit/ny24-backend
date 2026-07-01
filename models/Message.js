@@ -19,12 +19,18 @@ const messageSchema = new mongoose.Schema(
     },
     text: {
       type: String,
-      required: true,
+      default: "",
     },
     messageType: {
       type: String,
-      enum: ["text", "call_request"],
+      enum: ["text", "call_request", "image", "audio"],
       default: "text",
+    },
+    mediaUrl: {
+      type: String,
+    },
+    mediaDuration: {
+      type: Number,
     },
     callRequestStatus: {
       type: String,

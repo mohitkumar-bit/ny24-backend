@@ -1,7 +1,9 @@
 
+import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import User from "../models/authModal.js";
 import { formatVerificationForClient, hasActiveBusinessPlan } from "../utils/verificationHelpers.js";
+import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.js";
 
 const formatUserLocationResponse = (user) => {
   const loc = user.location;
@@ -26,7 +28,25 @@ const formatUserLocationResponse = (user) => {
 };
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from "../utils/jwt.js";
 
+const SESSION_REVOKED = {
+  message: "Logged in on another device. Please sign in again.",
+  code: "SESSION_REVOKED",
+};
 
+const issueSessionTokens = async (user, extraFields = {}) => {
+  const sessionId = crypto.randomUUID();
+  const tokenPayload = { id: user._id, role: user.role, sessionId };
+
+  const accessToken = generateAccessToken(tokenPayload);
+  const refreshToken = generateRefreshToken(tokenPayload);
+
+  Object.assign(user, extraFields);
+  user.refreshToken = refreshToken;
+  user.activeSessionId = sessionId;
+  await user.save();
+
+  return { accessToken, refreshToken };
+};
 
 const register = async (req, res) => {
   try {
@@ -50,19 +70,7 @@ const register = async (req, res) => {
       phone,
     });
 
-    const accessToken = generateAccessToken({
-      id: user._id,
-      role: user.role,
-    });
-
-    const refreshToken = generateRefreshToken({
-      id: user._id,
-      role: user.role,
-    });
-
-
-    user.refreshToken = refreshToken;
-    await user.save();
+    const { accessToken, refreshToken } = await issueSessionTokens(user);
 
     res.status(201).json({
       message: "User registered successfully",
@@ -107,20 +115,9 @@ const login = async (req, res) => {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    const accessToken = generateAccessToken({
-      id: user._id,
-      role: user.role,
+    const { accessToken, refreshToken } = await issueSessionTokens(user, {
+      lastLoginAt: new Date(),
     });
-
-    const refreshToken = generateRefreshToken({
-      id: user._id,
-      role: user.role,
-    });
-
-
-    user.refreshToken = refreshToken;
-    user.lastLoginAt = new Date();
-    await user.save();
 
     res.status(200).json({
       message: "Login successful",
@@ -149,6 +146,7 @@ const logout = async (req, res) => {
 
     await User.findByIdAndUpdate(userId, {
       refreshToken: null,
+      activeSessionId: null,
     });
 
     res.status(200).json({ message: "Logout successful" });
@@ -173,13 +171,17 @@ const refreshAccessToken = async (req, res) => {
     // check token exists in DB
     const user = await User.findById(decoded.id);
     if (!user || user.refreshToken !== refreshToken) {
-      return res.status(401).json({ message: "Invalid refresh token" });
+      return res.status(401).json(SESSION_REVOKED);
     }
 
-    // issue new access token
+    if (!decoded.sessionId || !user.activeSessionId || decoded.sessionId !== user.activeSessionId) {
+      return res.status(401).json(SESSION_REVOKED);
+    }
+
     const newAccessToken = generateAccessToken({
       id: user._id,
       role: user.role,
+      sessionId: user.activeSessionId,
     });
 
     res.status(200).json({
@@ -212,6 +214,7 @@ const getProfile = async (req, res) => {
         locationDetails,
         isWorker: user.isWorker,
         isVerified: user.isVerified,
+        profilePicture: user.profilePicture || null,
         verificationStatus: verification.status,
         canVerify: verification.canSubmit && hasActiveBusinessPlan(user),
         subscription: user.subscription
@@ -302,6 +305,7 @@ const updateProfile = async (req, res) => {
         locationDetails,
         isWorker: user.isWorker,
         isVerified: user.isVerified,
+        profilePicture: user.profilePicture || null,
         verificationStatus: verification.status,
         canVerify: verification.canSubmit && hasActiveBusinessPlan(user),
         subscription: user.subscription
@@ -313,4 +317,109 @@ const updateProfile = async (req, res) => {
   }
 };
 
-export { register, login, logout, refreshAccessToken, getProfile, updateProfile };
+const uploadProfilePictureHandler = async (req, res) => {
+  try {
+    if (!isCloudinaryConfigured()) {
+      return res.status(503).json({
+        message: "Image upload is not configured. Add Cloudinary credentials to the server.",
+      });
+    }
+
+    if (!req.file?.buffer) {
+      return res.status(400).json({ message: "Image file is required" });
+    }
+
+    const profilePicture = await uploadToCloudinary(
+      req.file.buffer,
+      req.user.id,
+      "profiles"
+    );
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: { profilePicture } },
+      { new: true }
+    ).populate("subscription");
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const verification = formatVerificationForClient(user);
+    const { location, locationDetails } = formatUserLocationResponse(user);
+
+    res.status(200).json({
+      success: true,
+      profilePicture,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        bio: user.bio,
+        location,
+        locationDetails,
+        isWorker: user.isWorker,
+        isVerified: user.isVerified,
+        profilePicture: user.profilePicture || null,
+        verificationStatus: verification.status,
+        canVerify: verification.canSubmit && hasActiveBusinessPlan(user),
+        subscription: user.subscription,
+      },
+    });
+  } catch (error) {
+    console.error("UPLOAD PROFILE PICTURE ERROR 👉", error);
+    res.status(500).json({ message: "Failed to upload profile picture" });
+  }
+};
+
+const removeProfilePictureHandler = async (req, res) => {
+  try {
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: { profilePicture: null } },
+      { new: true }
+    ).populate("subscription");
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const verification = formatVerificationForClient(user);
+    const { location, locationDetails } = formatUserLocationResponse(user);
+
+    res.status(200).json({
+      success: true,
+      profilePicture: null,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        bio: user.bio,
+        location,
+        locationDetails,
+        isWorker: user.isWorker,
+        isVerified: user.isVerified,
+        profilePicture: null,
+        verificationStatus: verification.status,
+        canVerify: verification.canSubmit && hasActiveBusinessPlan(user),
+        subscription: user.subscription,
+      },
+    });
+  } catch (error) {
+    console.error("REMOVE PROFILE PICTURE ERROR 👉", error);
+    res.status(500).json({ message: "Failed to remove profile picture" });
+  }
+};
+
+export {
+  register,
+  login,
+  logout,
+  refreshAccessToken,
+  getProfile,
+  updateProfile,
+  uploadProfilePictureHandler,
+  removeProfilePictureHandler,
+};
