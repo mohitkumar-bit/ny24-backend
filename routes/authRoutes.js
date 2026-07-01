@@ -8,6 +8,7 @@ import {
   updateProfile,
   uploadProfilePictureHandler,
   removeProfilePictureHandler,
+  changePassword,
 } from "../controllers/authController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import { uploadJobImage } from "../middleware/uploadJobImage.js";
@@ -30,6 +31,7 @@ router.post(
   uploadProfilePictureHandler
 );
 router.delete("/profile-picture", authMiddleware, removeProfilePictureHandler);
+router.post("/change-password", authMiddleware, changePassword);
 router.post("/register", register);
 router.post("/login", login);
 router.post("/logout", authMiddleware, logout);
