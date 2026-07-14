@@ -5,12 +5,12 @@ const seedAdmin = async () => {
   const count = await Admin.countDocuments();
   if (count > 0) return;
 
-  const email = process.env.ADMIN_EMAIL || "admin@ny24.com";
+  const email = process.env.ADMIN_EMAIL || "admin@gigseva.com";
   const password = process.env.ADMIN_PASSWORD || "admin123";
   const hashedPassword = await bcrypt.hash(password, 10);
 
   await Admin.create({
-    name: "NY24 Admin",
+    name: "gigSEVA Admin",
     email,
     password: hashedPassword,
   });

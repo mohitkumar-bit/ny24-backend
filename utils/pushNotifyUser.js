@@ -19,7 +19,10 @@ export const notifyUser = async ({
     });
 
     const user = await User.findById(userId).select("pushTokens");
-    if (!user?.pushTokens?.length) return;
+    if (!user?.pushTokens?.length) {
+      console.warn(`notifyUser: no push tokens for user ${userId}`);
+      return;
+    }
 
     const tokens = user.pushTokens.map((entry) => entry.token);
     const messages = buildPushMessages(tokens, {
@@ -29,7 +32,10 @@ export const notifyUser = async ({
       channelId,
     });
 
-    await sendExpoPushNotifications(messages);
+    const pushResult = await sendExpoPushNotifications(messages);
+    if (pushResult.errors?.length) {
+      console.error(`notifyUser push delivery issues for user ${userId}:`, pushResult.errors);
+    }
   } catch (error) {
     console.error("notifyUser failed:", error);
   }

@@ -9,10 +9,11 @@ const chunk = (arr, size) => {
 };
 
 export const sendExpoPushNotifications = async (messages) => {
-  if (!messages.length) return { success: true, sent: 0 };
+  if (!messages.length) return { success: true, sent: 0, errors: [] };
 
   const batches = chunk(messages, 100);
   let sent = 0;
+  const errors = [];
 
   for (const batch of batches) {
     const response = await fetch(EXPO_PUSH_URL, {
@@ -26,16 +27,26 @@ export const sendExpoPushNotifications = async (messages) => {
 
     if (!response.ok) {
       const text = await response.text();
-      console.error("Expo push failed:", text);
+      console.error("Expo push HTTP failed:", text);
+      errors.push(text);
       continue;
     }
 
     const result = await response.json();
     const data = Array.isArray(result.data) ? result.data : [result.data];
-    sent += data.filter((item) => item?.status === "ok").length;
+
+    for (const item of data) {
+      if (item?.status === "ok") {
+        sent += 1;
+      } else {
+        const message = item?.message || item?.details?.error || "Unknown push error";
+        console.error("Expo push ticket error:", message, item);
+        errors.push(message);
+      }
+    }
   }
 
-  return { success: true, sent };
+  return { success: errors.length === 0, sent, errors };
 };
 
 export const buildPushMessages = (tokens, { title, body, data = {}, channelId = "default" }) => {

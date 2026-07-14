@@ -52,6 +52,7 @@ const workerProfileSchema = new mongoose.Schema(
       city: String,
       district: String,
       state: String,
+      country: String,
       pincode: String,
     },
 
