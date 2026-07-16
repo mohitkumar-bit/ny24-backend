@@ -180,6 +180,7 @@ export const sendMessage = async (req, res) => {
         type: "chat",
         conversationId: targetConversationId.toString(),
         senderId: senderId.toString(),
+        messageId: message._id.toString(),
       },
     });
 

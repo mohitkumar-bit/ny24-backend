@@ -11,24 +11,28 @@ export const notifyUser = async ({
   channelId = "default",
 }) => {
   try {
-    await Notification.create({
+    const notification = await Notification.create({
       user: userId,
       title,
       body,
       type,
+      data,
     });
 
     const user = await User.findById(userId).select("pushTokens");
     if (!user?.pushTokens?.length) {
       console.warn(`notifyUser: no push tokens for user ${userId}`);
-      return;
+      return notification;
     }
 
     const tokens = user.pushTokens.map((entry) => entry.token);
     const messages = buildPushMessages(tokens, {
       title,
       body,
-      data,
+      data: {
+        ...data,
+        notificationId: notification._id.toString(),
+      },
       channelId,
     });
 
@@ -36,8 +40,11 @@ export const notifyUser = async ({
     if (pushResult.errors?.length) {
       console.error(`notifyUser push delivery issues for user ${userId}:`, pushResult.errors);
     }
+
+    return notification;
   } catch (error) {
     console.error("notifyUser failed:", error);
+    return null;
   }
 };
 

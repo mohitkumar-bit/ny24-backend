@@ -59,5 +59,6 @@ export const buildPushMessages = (tokens, { title, body, data = {}, channelId = 
     data,
     priority: "high",
     channelId,
+    ttl: 3600,
   }));
 };

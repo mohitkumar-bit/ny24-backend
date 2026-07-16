@@ -23,6 +23,10 @@ const notificationSchema = new mongoose.Schema(
       enum: ["general", "promo", "alert", "update", "chat"],
       default: "general",
     },
+    data: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
     isRead: {
       type: Boolean,
       default: false,
