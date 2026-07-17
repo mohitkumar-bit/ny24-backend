@@ -79,7 +79,7 @@ const getJobs = async (req, res) => {
     const jobs = await JobPost.find(query)
       .populate({
         path: "author",
-        select: "name phone isVerified location subscription",
+        select: "name phone profilePicture isVerified location subscription",
         populate: { path: "subscription", select: "plan status" },
       })
       .populate("categories", "name icon")
@@ -157,7 +157,7 @@ const getJobs = async (req, res) => {
 const getJobById = async (req, res) => {
   try {
     const job = await JobPost.findById(req.params.id)
-      .populate("author", "name phone email isVerified")
+      .populate("author", "name phone email profilePicture isVerified")
       .populate("categories", "name icon");
     
     if (!job) {

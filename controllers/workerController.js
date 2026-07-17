@@ -124,7 +124,7 @@ const getWorkers = async (req, res) => {
       WorkerProfile.find(query)
         .populate({
           path: "user",
-          select: "name email phone isVerified location subscription",
+          select: "name email phone profilePicture isVerified location subscription",
           populate: { path: "subscription", select: "plan status" },
         })
         .populate("skills", "name"),
@@ -286,7 +286,7 @@ const getWorkerById = async (req, res) => {
   try {
     const { id } = req.params;
     const profile = await WorkerProfile.findById(id)
-      .populate("user", "name email phone isVerified")
+      .populate("user", "name email phone profilePicture isVerified")
       .populate("skills", "name icon");
 
     if (!profile) {
