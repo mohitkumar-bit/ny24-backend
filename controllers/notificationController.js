@@ -1,20 +1,27 @@
 import User from "../models/authModal.js";
 import Notification from "../models/Notification.js";
 
+const ADMIN_NOTIFICATION_FILTER = { type: { $ne: "chat" } };
+
 const getNotifications = async (req, res) => {
   try {
     const userId = req.user.id;
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(parseInt(req.query.limit, 10) || 30, 100);
     const skip = (page - 1) * limit;
+    // Chat alerts are for phone push / local tray sync only — not the in-app notifications page.
+    const includeChat = req.query.includeChat === "1" || req.query.includeChat === "true";
+    const query = includeChat
+      ? { user: userId }
+      : { user: userId, ...ADMIN_NOTIFICATION_FILTER };
 
     const [notifications, total, unreadCount] = await Promise.all([
-      Notification.find({ user: userId })
+      Notification.find(query)
         .sort("-createdAt")
         .skip(skip)
         .limit(limit),
-      Notification.countDocuments({ user: userId }),
-      Notification.countDocuments({ user: userId, isRead: false }),
+      Notification.countDocuments(query),
+      Notification.countDocuments({ ...query, isRead: false }),
     ]);
 
     res.status(200).json({
@@ -35,6 +42,7 @@ const getUnreadCount = async (req, res) => {
     const unreadCount = await Notification.countDocuments({
       user: req.user.id,
       isRead: false,
+      ...ADMIN_NOTIFICATION_FILTER,
     });
     res.status(200).json({ success: true, unreadCount });
   } catch {
@@ -61,7 +69,7 @@ const markAsRead = async (req, res) => {
 const markAllAsRead = async (req, res) => {
   try {
     await Notification.updateMany(
-      { user: req.user.id, isRead: false },
+      { user: req.user.id, isRead: false, type: { $ne: "chat" } },
       { $set: { isRead: true } }
     );
     res.status(200).json({ success: true, message: "All notifications marked as read" });

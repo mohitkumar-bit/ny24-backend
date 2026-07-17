@@ -60,5 +60,7 @@ export const buildPushMessages = (tokens, { title, body, data = {}, channelId = 
     priority: "high",
     channelId,
     ttl: 3600,
+    // Helps Android deliver while the app is backgrounded/killed (requires FCM).
+    _contentAvailable: true,
   }));
 };

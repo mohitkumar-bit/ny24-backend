@@ -105,7 +105,7 @@ const createCallRequest = async (req, res) => {
     notifyUser({
       userId: targetReceiverId,
       title: requester?.name || "Call request",
-      body: "Sent you a call request",
+      body: "You got a new call request",
       type: "chat",
       channelId: "chat",
       data: {

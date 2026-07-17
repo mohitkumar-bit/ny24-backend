@@ -21,7 +21,9 @@ export const notifyUser = async ({
 
     const user = await User.findById(userId).select("pushTokens");
     if (!user?.pushTokens?.length) {
-      console.warn(`notifyUser: no push tokens for user ${userId}`);
+      console.warn(
+        `notifyUser: no push tokens for user ${userId} — device will only see alerts after opening the app (local sync). Set up FCM + rebuild for background push.`
+      );
       return notification;
     }
 
@@ -49,9 +51,8 @@ export const notifyUser = async ({
 };
 
 export const getChatMessagePreview = (messageType, text) => {
-  if (text?.trim()) return text.trim();
-  if (messageType === "image") return "Sent a photo";
-  if (messageType === "audio") return "Sent a voice message";
-  if (messageType === "call_request") return "Sent a call request";
-  return "Sent a message";
+  if (messageType === "call_request") return "You got a new call request";
+  if (messageType === "image") return "You got a new message";
+  if (messageType === "audio") return "You got a new message";
+  return "You got a new message";
 };
