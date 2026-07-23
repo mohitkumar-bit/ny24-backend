@@ -11,7 +11,16 @@ const transactionSchema = new mongoose.Schema(
     subscription: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Subscription",
-      required: true,
+    },
+
+    plan: {
+      type: String,
+      enum: ["free", "pro", "business"],
+    },
+
+    billingCycle: {
+      type: String,
+      enum: ["monthly", "yearly"],
     },
 
     amount: {
@@ -31,12 +40,23 @@ const transactionSchema = new mongoose.Schema(
     },
 
     paymentMethod: {
-      type: String, // card, upi, dummy, etc.
+      type: String, // card, upi, phonepe, dummy, etc.
     },
 
     transactionId: {
       type: String,
       unique: true,
+    },
+
+    merchantOrderId: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
+
+    providerOrderId: {
+      type: String,
     },
 
     paidAt: {

@@ -25,7 +25,19 @@ const limiter = rateLimit({
     max: 100, // limit each IP to 100 requests per windowMs
 });
 
-app.use(cors());
+app.use(
+  cors({
+    origin: true, // reflect request origin (localhost:8081, Expo, etc.)
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "ngrok-skip-browser-warning",
+      "X-Requested-With",
+    ],
+  })
+);
 app.use(express.json());
 
 app.get("/health", (req, res) => {

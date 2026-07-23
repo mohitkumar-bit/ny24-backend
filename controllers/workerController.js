@@ -1,7 +1,11 @@
 import mongoose from "mongoose";
 import WorkerProfile from "../models/WorkerProfile.js";
 import User from "../models/authModal.js";
+import Category from "../models/Category.js";
 import { distanceKm, hasValidCoordinates, resolveWorkerCoordinates } from "../utils/distance.js";
+
+const escapeRegex = (value = "") =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const normalizeSkillIds = (skills) => {
   if (!skills) return [];
@@ -75,7 +79,8 @@ const getWorkers = async (req, res) => {
     const userId = req.user.id;
     const { 
       category, 
-      city, 
+      city,
+      search,
       minPrice, 
       maxPrice, 
       gender, 
@@ -92,7 +97,29 @@ const getWorkers = async (req, res) => {
       query.skills = { $in: [new mongoose.Types.ObjectId(category)] };
     }
     if (city) {
-      query["location.city"] = new RegExp(city, "i");
+      query["location.city"] = new RegExp(escapeRegex(city), "i");
+    }
+
+    if (search && String(search).trim()) {
+      const searchRegex = new RegExp(escapeRegex(String(search).trim()), "i");
+      const matchingCategories = await Category.find({ name: searchRegex }).select("_id");
+      const categoryIds = matchingCategories.map((c) => c._id);
+
+      const searchOr = [
+        { title: searchRegex },
+        { description: searchRegex },
+        { "location.city": searchRegex },
+        { "location.state": searchRegex },
+        { "location.country": searchRegex },
+        { "location.district": searchRegex },
+        { "location.address": searchRegex },
+      ];
+
+      if (categoryIds.length > 0) {
+        searchOr.push({ skills: { $in: categoryIds } });
+      }
+
+      query.$and = [...(query.$and || []), { $or: searchOr }];
     }
 
     // Price Filter

@@ -1,7 +1,11 @@
 import JobPost from "../models/JobPost.js";
 import User from "../models/authModal.js";
+import Category from "../models/Category.js";
 import { distanceKm, hasValidCoordinates } from "../utils/distance.js";
 import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.js";
+
+const escapeRegex = (value = "") =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const createJob = async (req, res) => {
   try {
@@ -68,12 +72,23 @@ const getJobs = async (req, res) => {
     let query = {};
     
     if (category) query.categories = { $in: [category] };
-    if (city) query["location.city"] = new RegExp(city, "i");
+    if (city) query["location.city"] = new RegExp(escapeRegex(city), "i");
     if (search) {
+      const searchRegex = new RegExp(escapeRegex(String(search).trim()), "i");
+      const matchingCategories = await Category.find({ name: searchRegex }).select("_id");
+      const categoryIds = matchingCategories.map((c) => c._id);
+
       query.$or = [
-        { title: new RegExp(search, "i") },
-        { description: new RegExp(search, "i") }
+        { title: searchRegex },
+        { description: searchRegex },
+        { "location.city": searchRegex },
+        { "location.state": searchRegex },
+        { "location.address": searchRegex },
       ];
+
+      if (categoryIds.length > 0) {
+        query.$or.push({ categories: { $in: categoryIds } });
+      }
     }
 
     const jobs = await JobPost.find(query)
