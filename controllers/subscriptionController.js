@@ -273,13 +273,27 @@ export const verifyPhonePeOrder = async (req, res) => {
 };
 
 /**
- * Browser redirect landing page after PhonePe checkout (opened via ngrok HTTPS).
+ * Browser landing page after PhonePe checkout.
+ * Opens the native app via deep link (Android intent + gigseva://).
+ * Never auto-redirects to localhost WEB_APP_URL.
  */
 export const phonePeRedirect = async (req, res) => {
   const merchantOrderId = String(req.query.merchantOrderId || "");
-  const webAppUrl = (process.env.WEB_APP_URL || "http://localhost:8081").replace(/\/$/, "");
-  const webReturn = `${webAppUrl}/payment?merchantOrderId=${encodeURIComponent(merchantOrderId)}`;
-  const deepLink = `gigseva://payment?merchantOrderId=${encodeURIComponent(merchantOrderId)}`;
+  const encodedId = encodeURIComponent(merchantOrderId);
+  const deepLink = `gigseva://payment?merchantOrderId=${encodedId}`;
+  // Android Chrome often blocks custom schemes — Intent URL is more reliable
+  const androidIntent =
+    `intent://payment?merchantOrderId=${encodedId}` +
+    `#Intent;scheme=gigseva;package=com.tripledots.geegseva;end`;
+
+  const rawWeb = (process.env.WEB_APP_URL || "").replace(/\/$/, "");
+  const isLocalWeb =
+    !rawWeb ||
+    /localhost|127\.0\.0\.1/i.test(rawWeb);
+  const webReturn =
+    !isLocalWeb && rawWeb
+      ? `${rawWeb}/payment?merchantOrderId=${encodedId}`
+      : "";
 
   res.setHeader("Content-Type", "text/html");
   res.send(`<!DOCTYPE html>
@@ -293,19 +307,26 @@ export const phonePeRedirect = async (req, res) => {
     .card { background:#fff; border-radius:20px; padding:28px 22px; max-width:420px; box-shadow:0 10px 30px rgba(0,0,0,.08); }
     h1 { font-size:22px; margin:0 0 8px; }
     p { color:#666; line-height:1.5; }
-    a { display:inline-block; margin:10px 6px 0; background:#5f259f; color:#fff; text-decoration:none; padding:14px 22px; border-radius:14px; font-weight:700; }
-    a.secondary { background:#00A300; }
+    a { display:inline-block; margin:10px 6px 0; background:#00A300; color:#fff; text-decoration:none; padding:14px 22px; border-radius:14px; font-weight:700; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Payment complete</h1>
-    <p>Return to gigSEVA to confirm your subscription.</p>
-    <a href="${webReturn}">Continue in browser</a>
-    <a class="secondary" href="${deepLink}">Open app</a>
+    <p>Tap below to return to the gigSEVA app and confirm your plan.</p>
+    <a id="openApp" href="${deepLink}">Open gigSEVA app</a>
   </div>
   <script>
-    setTimeout(function () { window.location.href = ${JSON.stringify(webReturn)}; }, 600);
+    (function () {
+      var deepLink = ${JSON.stringify(deepLink)};
+      var androidIntent = ${JSON.stringify(androidIntent)};
+      var isAndroid = /Android/i.test(navigator.userAgent);
+      var target = isAndroid ? androidIntent : deepLink;
+      document.getElementById('openApp').setAttribute('href', target);
+      // Auto-open app — do NOT fall back to localhost web
+      setTimeout(function () { window.location.href = target; }, 300);
+      setTimeout(function () { window.location.href = deepLink; }, 900);
+    })();
   </script>
 </body>
 </html>`);
