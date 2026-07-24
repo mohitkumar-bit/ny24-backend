@@ -12,6 +12,20 @@ const createJob = async (req, res) => {
     const { title, description, categories, price, location, requirements, images } = req.body;
     const authorId = req.user.id;
 
+    const cleanTitle = typeof title === "string" ? title.trim() : "";
+    const cleanDescription = typeof description === "string" ? description.trim() : "";
+
+    if (!cleanTitle || cleanTitle.length > 11 || /\d/.test(cleanTitle)) {
+      return res.status(400).json({
+        message: "Title must be at most 11 characters and cannot contain numbers",
+      });
+    }
+    if (!cleanDescription || cleanDescription.length > 29 || /\d/.test(cleanDescription)) {
+      return res.status(400).json({
+        message: "Description must be at most 29 characters and cannot contain numbers",
+      });
+    }
+
     // Check subscription and post limit
     const user = await User.findById(authorId).populate("subscription");
     const isSubscribed = user?.subscription?.status === "active";
@@ -32,8 +46,8 @@ const createJob = async (req, res) => {
 
     const job = await JobPost.create({
       author: authorId,
-      title,
-      description,
+      title: cleanTitle,
+      description: cleanDescription,
       categories,
       price,
       location,

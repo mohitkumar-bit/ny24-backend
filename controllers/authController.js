@@ -235,15 +235,51 @@ const updateProfile = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const updateData = { name, phone, bio };
+    let cleanBio = bio;
+    if (bio !== undefined && bio !== null) {
+      cleanBio = String(bio).trim();
+      if (cleanBio.length > 29 || /\d/.test(cleanBio)) {
+        return res.status(400).json({
+          message: "Bio must be at most 29 characters and cannot contain numbers",
+        });
+      }
+    }
+
+    let cleanName = name;
+    if (name !== undefined && name !== null) {
+      cleanName = String(name).trim();
+      if (!cleanName || /\d/.test(cleanName)) {
+        return res.status(400).json({
+          message: "Full name is required and cannot contain numbers",
+        });
+      }
+    }
+
+    const noDigits = (value) => {
+      if (value === undefined || value === null || value === "") return true;
+      return !/\d/.test(String(value));
+    };
+
+    if (
+      locationData &&
+      (!noDigits(locationData.address) ||
+        !noDigits(locationData.city) ||
+        !noDigits(locationData.state))
+    ) {
+      return res.status(400).json({
+        message: "Area, city, and state cannot contain numbers",
+      });
+    }
+
+    const updateData = { name: cleanName, phone, bio: cleanBio };
 
     if (locationData?.coordinates?.length === 2) {
       updateData.location = {
         type: "Point",
         coordinates: locationData.coordinates,
-        address: locationData.address || location || "",
-        city: locationData.city || "",
-        state: locationData.state || "",
+        address: String(locationData.address || location || "").replace(/\d/g, ""),
+        city: String(locationData.city || "").replace(/\d/g, ""),
+        state: String(locationData.state || "").replace(/\d/g, ""),
         district: locationData.district || "",
         pincode: locationData.pincode || "",
       };
@@ -258,9 +294,9 @@ const updateProfile = async (req, res) => {
       updateData.location = {
         type: "Point",
         coordinates: prevCoords,
-        address: locationData.address || "",
-        city: locationData.city || "",
-        state: locationData.state || "",
+        address: String(locationData.address || "").replace(/\d/g, ""),
+        city: String(locationData.city || "").replace(/\d/g, ""),
+        state: String(locationData.state || "").replace(/\d/g, ""),
         district: locationData.district || "",
         pincode: locationData.pincode || "",
       };
