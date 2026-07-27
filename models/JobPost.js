@@ -53,6 +53,10 @@ const jobPostSchema = new mongoose.Schema(
       default: "open",
     },
     images: [String],
+    isFeatured: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );

@@ -3,9 +3,24 @@ import User from "../models/authModal.js";
 import Category from "../models/Category.js";
 import { distanceKm, hasValidCoordinates } from "../utils/distance.js";
 import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.js";
+import { isFeaturedActive } from "../utils/featured.js";
 
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Calendar-month post quotas by plan */
+const PLAN_MONTHLY_POST_LIMIT = {
+  free: 1,
+  pro: 1,
+  business: 3,
+};
+
+const getMonthStart = () => {
+  const start = new Date();
+  start.setDate(1);
+  start.setHours(0, 0, 0, 0);
+  return start;
+};
 
 const createJob = async (req, res) => {
   try {
@@ -26,19 +41,36 @@ const createJob = async (req, res) => {
       });
     }
 
-    // Check subscription and post limit
     const user = await User.findById(authorId).populate("subscription");
-    const isSubscribed = user?.subscription?.status === "active";
+    const sub = user?.subscription;
+    const isActivePaid =
+      sub?.status === "active" && ["pro", "business"].includes(sub?.plan);
+    const plan = isActivePaid ? sub.plan : "free";
 
-    if (!isSubscribed) {
-      const postCount = await JobPost.countDocuments({ author: authorId });
-      if (postCount >= 2) {
-        return res.status(403).json({ 
-          success: false,
-          message: "Free plan limit reached. You can only create 2 job posts. Upgrade to Pro to post more." 
-        });
-      }
+    const limit = PLAN_MONTHLY_POST_LIMIT[plan] ?? 1;
+    const monthStart = getMonthStart();
+    const postCount = await JobPost.countDocuments({
+      author: authorId,
+      createdAt: { $gte: monthStart },
+    });
+
+    if (postCount >= limit) {
+      const nextMonthHint =
+        plan === "free"
+          ? `${limit}/${limit} posts created this month. Upgrade your plan or try again next month.`
+          : `${limit}/${limit} posts created this month. You can create new posts next month.`;
+      return res.status(403).json({
+        success: false,
+        code: "POST_LIMIT_REACHED",
+        plan,
+        used: limit,
+        limit,
+        message: nextMonthHint,
+      });
     }
+
+    // Pro & Business posts within quota are featured
+    const isFeatured = plan === "pro" || plan === "business";
 
     const jobImages = Array.isArray(images)
       ? images.filter((url) => typeof url === "string" && url.trim())
@@ -52,6 +84,7 @@ const createJob = async (req, res) => {
       price,
       location,
       images: jobImages,
+      isFeatured,
       requirements: {
         gender: requirements?.gender || "Any",
         minAge:
@@ -149,7 +182,7 @@ const getJobs = async (req, res) => {
         recencyScore +
         verifiedBoost;
 
-      const isFeatured = isPremium && km != null && km <= 15;
+      const isFeatured = isFeaturedActive(job);
 
       return {
         ...job,
@@ -192,8 +225,12 @@ const getJobById = async (req, res) => {
     if (!job) {
       return res.status(404).json({ message: "Job not found" });
     }
-    
-    res.status(200).json(job);
+
+    const jobObj = job.toObject ? job.toObject() : job;
+    res.status(200).json({
+      ...jobObj,
+      isFeatured: isFeaturedActive(jobObj),
+    });
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
@@ -206,7 +243,26 @@ const getMyJobs = async (req, res) => {
       .populate("categories", "name icon")
       .sort("-createdAt");
 
-    res.status(200).json(jobs);
+    // Drop featured flag after 30 days so home feed and My Ads stay in sync
+    const expiredIds = jobs
+      .filter((j) => j.isFeatured && !isFeaturedActive(j))
+      .map((j) => j._id);
+    if (expiredIds.length > 0) {
+      await JobPost.updateMany(
+        { _id: { $in: expiredIds } },
+        { $set: { isFeatured: false } }
+      );
+    }
+
+    res.status(200).json(
+      jobs.map((job) => {
+        const jobObj = job.toObject ? job.toObject() : job;
+        return {
+          ...jobObj,
+          isFeatured: isFeaturedActive(jobObj),
+        };
+      })
+    );
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
