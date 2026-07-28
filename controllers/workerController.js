@@ -22,6 +22,25 @@ const normalizeSkillIds = (skills) => {
   return Array.from(unique).map((id) => new mongoose.Types.ObjectId(id));
 };
 
+const AGE_MIN = 18;
+
+const normalizeAge = (age) => {
+  if (age === undefined || age === null || age === "") return undefined;
+  const n = Number(age);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.max(AGE_MIN, Math.trunc(n));
+};
+
+const assertAgeAtLeast18 = (age, res) => {
+  if (age === undefined || age === null || age === "") return true;
+  const n = Number(age);
+  if (!Number.isFinite(n) || n < AGE_MIN) {
+    res.status(400).json({ message: `Age must be ${AGE_MIN} or older` });
+    return false;
+  }
+  return true;
+};
+
 const createWorkerProfile = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -47,6 +66,8 @@ const createWorkerProfile = async (req, res) => {
       return res.status(400).json({ message: "At least one skill is required" });
     }
 
+    if (!assertAgeAtLeast18(age, res)) return;
+
     const workerProfile = await WorkerProfile.create({
       user: userId,
       title,
@@ -55,7 +76,7 @@ const createWorkerProfile = async (req, res) => {
       experience,
       hourlyRate,
       location,
-      age,
+      age: normalizeAge(age),
       gender,
       interestedInLongDistance
     });
@@ -142,8 +163,8 @@ const getWorkers = async (req, res) => {
     // Age Filter
     if (minAge || maxAge) {
       query.age = {};
-      if (minAge) query.age.$gte = Number(minAge);
-      if (maxAge) query.age.$lte = Number(maxAge);
+      if (minAge) query.age.$gte = Math.max(AGE_MIN, Number(minAge));
+      if (maxAge) query.age.$lte = Math.max(AGE_MIN, Number(maxAge));
     }
     
     const [currentUser, workersRaw] = await Promise.all([
@@ -275,6 +296,8 @@ const updateWorkerProfile = async (req, res) => {
       return res.status(400).json({ message: "At least one skill is required" });
     }
 
+    if (!assertAgeAtLeast18(age, res)) return;
+
     const profile = await WorkerProfile.findOneAndUpdate(
       { user: userId },
       { 
@@ -286,7 +309,7 @@ const updateWorkerProfile = async (req, res) => {
           hourlyRate,
           location,
           availability,
-          age,
+          age: normalizeAge(age),
           gender,
           interestedInLongDistance
         }
