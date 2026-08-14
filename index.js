@@ -15,8 +15,8 @@ import adminRoutes from "./routes/adminRoutes.js";
 import callRequestRoutes from "./routes/callRequestRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import connectDB from "./utils/db.js";
-import { seedCategories } from "./controllers/categoryController.js";
-import { seedAdmin } from "./utils/seedAdmin.js";
+// import { seedCategories } from "./controllers/categoryController.js";
+// import { seedAdmin } from "./utils/seedAdmin.js";
 
 const app = express();
 
@@ -61,7 +61,5 @@ const PORT = process.env.PORT || 4000;
 
 app.listen(PORT, async () => {
     await connectDB();
-    await seedCategories();
-    await seedAdmin();
     console.log(`Server is running on port ${PORT}`);
 });

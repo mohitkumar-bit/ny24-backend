@@ -7,6 +7,9 @@ import {
   updateJob,
   deleteJob,
   uploadJobImageHandler,
+  getQuota,
+  createAddonOrder,
+  createFeatureOrder,
 } from "../controllers/jobController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import { uploadJobImage } from "../middleware/uploadJobImage.js";
@@ -27,6 +30,9 @@ router.post(
   uploadJobImageHandler
 );
 router.post("/", authMiddleware, createJob);
+router.get("/quota", authMiddleware, getQuota);
+router.post("/addon-order", authMiddleware, createAddonOrder);
+router.post("/:id/feature-order", authMiddleware, createFeatureOrder);
 router.get("/", authMiddleware, getJobs);
 router.get("/me", authMiddleware, getMyJobs);
 router.get("/:id", getJobById);

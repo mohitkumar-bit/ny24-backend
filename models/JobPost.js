@@ -57,6 +57,10 @@ const jobPostSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    featuredAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );

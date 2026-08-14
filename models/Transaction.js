@@ -62,6 +62,35 @@ const transactionSchema = new mongoose.Schema(
     paidAt: {
       type: Date,
     },
+
+    kind: {
+      type: String,
+      enum: [
+        "subscription",
+        "extra_post",
+        "extra_feature",
+        "extra_post_and_feature",
+      ],
+      default: "subscription",
+    },
+
+    jobPayload: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    targetJobId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "JobPost",
+    },
+
+    consumedJobId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "JobPost",
+    },
+
+    consumedAt: {
+      type: Date,
+    },
   },
   { timestamps: true }
 );

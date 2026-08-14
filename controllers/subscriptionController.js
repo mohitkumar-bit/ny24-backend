@@ -9,6 +9,7 @@ import {
   getPublicBaseUrl,
   validatePhonePeCallback,
 } from "../utils/phonepe.js";
+import { fulfillAddonTransaction, isAddonKind } from "../utils/postQuota.js";
 
 const SUCCESS_STATES = new Set(["COMPLETED", "SUCCESS", "PAID"]);
 
@@ -226,6 +227,14 @@ export const verifyPhonePeOrder = async (req, res) => {
     }
 
     if (transaction.status === "success") {
+      if (isAddonKind(transaction.kind)) {
+        return res.json({
+          status: "success",
+          kind: transaction.kind,
+          jobId: transaction.consumedJobId || transaction.targetJobId,
+          transaction,
+        });
+      }
       const subscription = await Subscription.findById(transaction.subscription);
       return res.json({
         status: "success",
@@ -238,6 +247,19 @@ export const verifyPhonePeOrder = async (req, res) => {
     const state = orderStatus?.state || orderStatus?.orderState || orderStatus?.paymentState;
 
     if (isPaymentSuccessful(state)) {
+      if (isAddonKind(transaction.kind)) {
+        const result = await fulfillAddonTransaction(transaction, {
+          providerOrderId: orderStatus?.orderId,
+        });
+        return res.json({
+          status: "success",
+          kind: transaction.kind,
+          job: result.job || null,
+          jobId: result.job?._id || result.featuredJobId || transaction.consumedJobId,
+          transaction,
+        });
+      }
+
       const pricing = PLAN_PRICING[transaction.plan] || PLAN_PRICING.pro;
       const result = await activatePaidSubscription({
         userId,
@@ -378,6 +400,13 @@ export const phonePeCallback = async (req, res) => {
     state = orderStatus?.state || state;
 
     if (isPaymentSuccessful(state)) {
+      if (isAddonKind(transaction.kind)) {
+        await fulfillAddonTransaction(transaction, {
+          providerOrderId: orderStatus?.orderId,
+        });
+        return res.json({ success: true, status: "success", kind: transaction.kind });
+      }
+
       const pricing = PLAN_PRICING[transaction.plan] || PLAN_PRICING.pro;
       await activatePaidSubscription({
         userId: String(transaction.user),

@@ -1,107 +1,247 @@
 import JobPost from "../models/JobPost.js";
 import User from "../models/authModal.js";
 import Category from "../models/Category.js";
+import Transaction from "../models/Transaction.js";
+import { randomUUID } from "crypto";
 import { distanceKm, hasValidCoordinates } from "../utils/distance.js";
 import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.js";
 import { isFeaturedActive } from "../utils/featured.js";
+import {
+  getQuotaForUser,
+  quoteAddon,
+  sanitizeJobFields,
+  createJobFromPayload,
+} from "../utils/postQuota.js";
+import { createPhonePeCheckout, getPublicBaseUrl } from "../utils/phonepe.js";
 
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Calendar-month post quotas by plan */
-const PLAN_MONTHLY_POST_LIMIT = {
-  free: 1,
-  pro: 1,
-  business: 3,
-};
-
-const getMonthStart = () => {
-  const start = new Date();
-  start.setDate(1);
-  start.setHours(0, 0, 0, 0);
-  return start;
+const getQuota = async (req, res) => {
+  try {
+    const quota = await getQuotaForUser(req.user.id);
+    res.status(200).json({ success: true, ...quota });
+  } catch (error) {
+    console.error("GET QUOTA ERROR 👉", error);
+    res.status(500).json({ message: "Server error" });
+  }
 };
 
 const createJob = async (req, res) => {
   try {
-    const { title, description, categories, price, location, requirements, images } = req.body;
     const authorId = req.user.id;
-
-    const cleanTitle = typeof title === "string" ? title.trim() : "";
-    const cleanDescription = typeof description === "string" ? description.trim() : "";
-
-    if (!cleanTitle || cleanTitle.length > 11 || /\d/.test(cleanTitle)) {
-      return res.status(400).json({
-        message: "Title must be at most 11 characters and cannot contain numbers",
-      });
-    }
-    if (!cleanDescription || cleanDescription.length > 29 || /\d/.test(cleanDescription)) {
-      return res.status(400).json({
-        message: "Description must be at most 29 characters and cannot contain numbers",
-      });
+    const parsed = sanitizeJobFields(req.body);
+    if (parsed.error) {
+      return res.status(400).json({ message: parsed.error });
     }
 
-    const user = await User.findById(authorId).populate("subscription");
-    const sub = user?.subscription;
-    const isActivePaid =
-      sub?.status === "active" && ["pro", "business"].includes(sub?.plan);
-    const plan = isActivePaid ? sub.plan : "free";
+    const quota = await getQuotaForUser(authorId);
+    const plan = quota.plan;
+    const wantFeatured = plan === "free" ? false : Boolean(req.body.wantFeatured);
+    const canBuyAddons = plan === "pro" || plan === "business";
 
-    const limit = PLAN_MONTHLY_POST_LIMIT[plan] ?? 1;
-    const monthStart = getMonthStart();
-    const postCount = await JobPost.countDocuments({
-      author: authorId,
-      createdAt: { $gte: monthStart },
+    const quote = quoteAddon({
+      quota,
+      wantFeatured,
+      isNewPost: true,
     });
 
-    if (postCount >= limit) {
+    if (quote.amount > 0 && !canBuyAddons) {
       const nextMonthHint =
         plan === "free"
-          ? `${limit}/${limit} posts created this month. Upgrade your plan or try again next month.`
-          : `${limit}/${limit} posts created this month. You can create new posts next month.`;
+          ? `${quota.postLimit}/${quota.postLimit} posts created this month. Upgrade your plan or try again next month.`
+          : `${quota.postLimit}/${quota.postLimit} posts created this month. You can create new posts next month.`;
       return res.status(403).json({
         success: false,
         code: "POST_LIMIT_REACHED",
         plan,
-        used: limit,
-        limit,
+        used: quota.postCount,
+        limit: quota.postLimit,
         message: nextMonthHint,
       });
     }
 
-    // Pro & Business posts within quota are featured
-    const isFeatured = plan === "pro" || plan === "business";
+    if (quote.amount > 0) {
+      const extraBits = [];
+      if (quote.extraPost) extraBits.push(`₹${quota.extraPostPrice} for an extra post`);
+      if (quote.extraFeature) extraBits.push(`₹${quota.extraFeaturePrice} to feature`);
+      return res.status(402).json({
+        success: false,
+        code: quote.extraPost ? "POST_PAYMENT_REQUIRED" : "FEATURE_PAYMENT_REQUIRED",
+        plan,
+        extraPost: quote.extraPost,
+        extraFeature: quote.extraFeature,
+        amount: quote.amount,
+        kind: quote.kind,
+        used: quota.postCount,
+        limit: quota.postLimit,
+        featuredUsed: quota.featuredCount,
+        featuredLimit: quota.featuredLimit,
+        message: quote.extraPost
+          ? `You've used ${quota.postCount}/${quota.postLimit} included posts this month. Pay ${extraBits.join(" + ")}.`
+          : `You've used your ${quota.featuredLimit} included featured post. Pay ₹${quota.extraFeaturePrice} to feature this post.`,
+      });
+    }
 
-    const jobImages = Array.isArray(images)
-      ? images.filter((url) => typeof url === "string" && url.trim())
-      : [];
+    const isFeatured = wantFeatured && quota.canFeatureFree;
 
-    const job = await JobPost.create({
-      author: authorId,
-      title: cleanTitle,
-      description: cleanDescription,
-      categories,
-      price,
-      location,
-      images: jobImages,
-      isFeatured,
-      requirements: {
-        gender: requirements?.gender || "Any",
-        minAge:
-          typeof requirements?.minAge === "number" ? requirements.minAge : null,
-        maxAge:
-          typeof requirements?.maxAge === "number" ? requirements.maxAge : null,
-      },
-    });
+    const job = await createJobFromPayload(authorId, parsed.payload, { isFeatured });
 
     res.status(201).json({
       success: true,
       message: "Job post created successfully",
-      job
+      job,
     });
   } catch (error) {
     console.error("CREATE JOB ERROR 👉", error);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+const createAddonOrder = async (req, res) => {
+  try {
+    const authorId = req.user.id;
+    const parsed = sanitizeJobFields(req.body);
+    if (parsed.error) {
+      return res.status(400).json({ message: parsed.error });
+    }
+
+    const quota = await getQuotaForUser(authorId);
+    if (quota.plan !== "pro" && quota.plan !== "business") {
+      return res.status(403).json({
+        message: "Extra posts and extra featured ads are available on Pro and Business plans.",
+      });
+    }
+
+    const wantFeatured = Boolean(req.body.wantFeatured);
+    const quote = quoteAddon({
+      quota,
+      wantFeatured,
+      isNewPost: true,
+    });
+
+    if (!quote.kind || quote.amount <= 0) {
+      const job = await createJobFromPayload(authorId, parsed.payload, {
+        isFeatured: wantFeatured && quota.canFeatureFree,
+      });
+      return res.status(201).json({
+        success: true,
+        paid: false,
+        job,
+      });
+    }
+
+    const merchantOrderId = `GS_ADDON_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    const publicBase = getPublicBaseUrl();
+    const redirectUrl = `${publicBase}/api/subscription/phonepe/redirect?merchantOrderId=${encodeURIComponent(merchantOrderId)}`;
+
+    await Transaction.create({
+      user: authorId,
+      plan: quota.plan,
+      amount: quote.amount,
+      status: "pending",
+      paymentMethod: "phonepe",
+      transactionId: `PHONEPE_${merchantOrderId}`,
+      merchantOrderId,
+      kind: quote.kind,
+      jobPayload: parsed.payload,
+    });
+
+    const payResponse = await createPhonePeCheckout({
+      merchantOrderId,
+      amountInr: quote.amount,
+      redirectUrl,
+    });
+
+    const checkoutUrl = payResponse?.redirectUrl || payResponse?.redirect_url;
+    if (!checkoutUrl) {
+      return res.status(502).json({ message: "PhonePe did not return a checkout URL" });
+    }
+
+    return res.status(201).json({
+      success: true,
+      paid: true,
+      merchantOrderId,
+      checkoutUrl,
+      amount: quote.amount,
+      kind: quote.kind,
+      extraPost: quote.extraPost,
+      extraFeature: quote.extraFeature,
+    });
+  } catch (error) {
+    console.error("CREATE ADDON ORDER ERROR 👉", error);
+    res.status(500).json({ message: error?.message || "Failed to start extra-post payment" });
+  }
+};
+
+const createFeatureOrder = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const job = await JobPost.findById(req.params.id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    if (job.author.toString() !== userId) {
+      return res.status(403).json({ message: "Not authorized to feature this job" });
+    }
+    if (isFeaturedActive(job)) {
+      return res.status(400).json({ message: "This post is already featured" });
+    }
+
+    const quota = await getQuotaForUser(userId);
+    if (quota.canFeatureFree) {
+      job.isFeatured = true;
+      job.featuredAt = new Date();
+      await job.save();
+      return res.status(200).json({
+        success: true,
+        paid: false,
+        job,
+        message: "Post featured using your included featured slot",
+      });
+    }
+
+    if (quota.plan !== "pro" && quota.plan !== "business") {
+      return res.status(403).json({
+        message: "Upgrade to Pro or Business to buy extra featured posts.",
+      });
+    }
+
+    const merchantOrderId = `GS_FEAT_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    const publicBase = getPublicBaseUrl();
+    const redirectUrl = `${publicBase}/api/subscription/phonepe/redirect?merchantOrderId=${encodeURIComponent(merchantOrderId)}`;
+
+    await Transaction.create({
+      user: userId,
+      plan: quota.plan,
+      amount: quota.extraFeaturePrice,
+      status: "pending",
+      paymentMethod: "phonepe",
+      transactionId: `PHONEPE_${merchantOrderId}`,
+      merchantOrderId,
+      kind: "extra_feature",
+      targetJobId: job._id,
+    });
+
+    const payResponse = await createPhonePeCheckout({
+      merchantOrderId,
+      amountInr: quota.extraFeaturePrice,
+      redirectUrl,
+    });
+    const checkoutUrl = payResponse?.redirectUrl || payResponse?.redirect_url;
+    if (!checkoutUrl) {
+      return res.status(502).json({ message: "PhonePe did not return a checkout URL" });
+    }
+
+    return res.status(201).json({
+      success: true,
+      paid: true,
+      merchantOrderId,
+      checkoutUrl,
+      amount: quota.extraFeaturePrice,
+      kind: "extra_feature",
+    });
+  } catch (error) {
+    console.error("CREATE FEATURE ORDER ERROR 👉", error);
+    res.status(500).json({ message: error?.message || "Failed to start feature payment" });
   }
 };
 
@@ -375,7 +515,10 @@ const uploadJobImageHandler = async (req, res) => {
 };
 
 export {
+  getQuota,
   createJob,
+  createAddonOrder,
+  createFeatureOrder,
   getJobs,
   getJobById,
   getMyJobs,
