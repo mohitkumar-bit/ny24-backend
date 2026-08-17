@@ -163,6 +163,19 @@ const userSchema = new mongoose.Schema(
         updatedAt: { type: Date, default: Date.now },
       },
     ],
+
+    quotaMonthKey: {
+      type: String,
+      default: null,
+    },
+    monthlyPostCount: {
+      type: Number,
+      default: 0,
+    },
+    monthlyFeaturedCount: {
+      type: Number,
+      default: 0,
+    },
   },
 
   { timestamps: true }

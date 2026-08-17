@@ -23,6 +23,12 @@ export function getMonthStart() {
   return start;
 }
 
+export function getMonthKey(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
 export function getPlanFromUser(user) {
   const sub = user?.subscription;
   const isActivePaid =
@@ -30,17 +36,54 @@ export function getPlanFromUser(user) {
   return isActivePaid ? sub.plan : "free";
 }
 
+async function ensureQuotaPeriod(user) {
+  const monthKey = getMonthKey();
+  if (user.quotaMonthKey === monthKey) return user;
+
+  if (!user.quotaMonthKey) {
+    const monthStart = getMonthStart();
+    const posts = await JobPost.find({
+      author: user._id,
+      createdAt: { $gte: monthStart },
+    }).select("isFeatured createdAt featuredAt");
+    user.monthlyPostCount = posts.length;
+    user.monthlyFeaturedCount = posts.filter((job) => isFeaturedActive(job)).length;
+  } else {
+    user.monthlyPostCount = 0;
+    user.monthlyFeaturedCount = 0;
+  }
+
+  user.quotaMonthKey = monthKey;
+  await user.save();
+  return user;
+}
+
+export async function consumePostQuota(authorId) {
+  const user = await User.findById(authorId);
+  if (!user) return;
+  await ensureQuotaPeriod(user);
+  await User.updateOne(
+    { _id: authorId, quotaMonthKey: getMonthKey() },
+    { $inc: { monthlyPostCount: 1 } }
+  );
+}
+
+export async function consumeFeatureQuota(authorId) {
+  const user = await User.findById(authorId);
+  if (!user) return;
+  await ensureQuotaPeriod(user);
+  await User.updateOne(
+    { _id: authorId, quotaMonthKey: getMonthKey() },
+    { $inc: { monthlyFeaturedCount: 1 } }
+  );
+}
+
 export async function getQuotaForUser(authorId) {
   const user = await User.findById(authorId).populate("subscription");
+  await ensureQuotaPeriod(user);
   const plan = getPlanFromUser(user);
-  const monthStart = getMonthStart();
-  const posts = await JobPost.find({
-    author: authorId,
-    createdAt: { $gte: monthStart },
-  }).select("isFeatured createdAt featuredAt");
-
-  const postCount = posts.length;
-  const featuredCount = posts.filter((job) => isFeaturedActive(job)).length;
+  const postCount = user.monthlyPostCount || 0;
+  const featuredCount = user.monthlyFeaturedCount || 0;
   const postLimit = PLAN_MONTHLY_POST_LIMIT[plan] ?? 1;
   const featuredLimit = PLAN_MONTHLY_FEATURED_LIMIT[plan] ?? 0;
 
@@ -116,7 +159,7 @@ export function sanitizeJobFields(body) {
 }
 
 export async function createJobFromPayload(authorId, payload, { isFeatured }) {
-  return JobPost.create({
+  const job = await JobPost.create({
     author: authorId,
     title: payload.title,
     description: payload.description,
@@ -128,6 +171,11 @@ export async function createJobFromPayload(authorId, payload, { isFeatured }) {
     featuredAt: isFeatured ? new Date() : null,
     requirements: payload.requirements,
   });
+  await consumePostQuota(authorId);
+  if (isFeatured) {
+    await consumeFeatureQuota(authorId);
+  }
+  return job;
 }
 
 export function isAddonKind(kind) {
@@ -154,6 +202,7 @@ export async function fulfillAddonTransaction(transaction, { providerOrderId } =
       isFeatured: true,
       featuredAt: new Date(),
     });
+    await consumeFeatureQuota(transaction.user);
     transaction.consumedAt = new Date();
     await transaction.save();
     return { featuredJobId: transaction.targetJobId };

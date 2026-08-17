@@ -11,6 +11,7 @@ import {
   quoteAddon,
   sanitizeJobFields,
   createJobFromPayload,
+  consumeFeatureQuota,
 } from "../utils/postQuota.js";
 import { createPhonePeCheckout, getPublicBaseUrl } from "../utils/phonepe.js";
 
@@ -191,6 +192,7 @@ const createFeatureOrder = async (req, res) => {
       job.isFeatured = true;
       job.featuredAt = new Date();
       await job.save();
+      await consumeFeatureQuota(userId);
       return res.status(200).json({
         success: true,
         paid: false,
@@ -473,8 +475,8 @@ const deleteJob = async (req, res) => {
       return res.status(404).json({ message: "Job not found" });
     }
 
-    // Ownership check
-    if (job.author.toString() !== userId) {
+    const authorId = job.author?._id ? String(job.author._id) : String(job.author);
+    if (authorId !== String(userId)) {
       return res.status(403).json({ message: "Not authorized to delete this job" });
     }
 
