@@ -33,6 +33,36 @@ const SESSION_REVOKED = {
   code: "SESSION_REVOKED",
 };
 
+const DUMMY_OTP = String(process.env.DUMMY_OTP || "123456");
+const OTP_TTL_MS = 5 * 60 * 1000;
+/** phone -> { otp, expiresAt, purpose, name?, email? } */
+const otpStore = new Map();
+
+function normalizePhone(raw) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+  if (digits.length === 11 && digits.startsWith("0")) return digits.slice(1);
+  return digits.slice(-10);
+}
+
+function isValidPhone(phone) {
+  return /^[0-9]{10}$/.test(phone);
+}
+
+function buildAuthUserPayload(user) {
+  return {
+    id: user._id,
+    name: user.name,
+    email: user.email || null,
+    role: user.role,
+    isWorker: user.isWorker,
+    subscription: user.subscription,
+    createdAt: user.createdAt,
+    phone: user.phone,
+    profilePicture: user.profilePicture || null,
+  };
+}
+
 const issueSessionTokens = async (user, extraFields = {}) => {
   const sessionId = crypto.randomUUID();
   const tokenPayload = { id: user._id, role: user.role, sessionId };
@@ -79,7 +109,8 @@ const register = async (req, res) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
-        isWorker: user.isWorker
+        isWorker: user.isWorker,
+        createdAt: user.createdAt,
       },
       accessToken,
       refreshToken,
@@ -110,6 +141,12 @@ const login = async (req, res) => {
       return res.status(403).json({ message: "Account is blocked" });
     }
 
+    if (!user.password) {
+      return res.status(401).json({
+        message: "This account uses phone OTP login. Please sign in with your phone number.",
+      });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid email or password" });
@@ -121,14 +158,7 @@ const login = async (req, res) => {
 
     res.status(200).json({
       message: "Login successful",
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        isWorker: user.isWorker,
-        subscription: user.subscription
-      },
+      user: buildAuthUserPayload(user),
       accessToken,
       refreshToken,
     });
@@ -138,7 +168,159 @@ const login = async (req, res) => {
   }
 };
 
+/**
+ * Dummy OTP — always accepts DUMMY_OTP (default 123456). No SMS sent.
+ * purpose: "login" | "register"
+ */
+const sendOtp = async (req, res) => {
+  try {
+    const phone = normalizePhone(req.body?.phone);
+    const purpose = String(req.body?.purpose || "login").toLowerCase();
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const email =
+      typeof req.body?.email === "string"
+        ? req.body.email.trim().toLowerCase()
+        : "";
 
+    if (!isValidPhone(phone)) {
+      return res.status(400).json({ message: "Enter a valid 10-digit phone number" });
+    }
+
+    if (purpose !== "login" && purpose !== "register") {
+      return res.status(400).json({ message: "Invalid purpose" });
+    }
+
+    const existing = await User.findOne({ phone });
+
+    if (purpose === "login" && !existing) {
+      return res.status(404).json({
+        message: "No account found for this number. Please sign up.",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    if (purpose === "register") {
+      if (!name) {
+        return res.status(400).json({ message: "Name is required to sign up" });
+      }
+      if (existing) {
+        return res.status(400).json({
+          message: "An account already exists with this number. Please sign in.",
+          code: "USER_EXISTS",
+        });
+      }
+      if (email) {
+        const emailTaken = await User.findOne({ email });
+        if (emailTaken) {
+          return res.status(400).json({ message: "Email is already registered" });
+        }
+      }
+    }
+
+    if (existing?.isBlocked) {
+      return res.status(403).json({ message: "Account is blocked" });
+    }
+
+    otpStore.set(phone, {
+      otp: DUMMY_OTP,
+      expiresAt: Date.now() + OTP_TTL_MS,
+      purpose,
+      name: purpose === "register" ? name : existing?.name || "",
+      email: purpose === "register" ? email : "",
+    });
+
+    return res.status(200).json({
+      message: "OTP sent successfully",
+      phone,
+      expiresIn: Math.floor(OTP_TTL_MS / 1000),
+      // Dummy mode — clients can show this for testing
+      dummyOtp: DUMMY_OTP,
+    });
+  } catch (error) {
+    console.error("SEND OTP ERROR 👉", error);
+    return res.status(500).json({ message: "Failed to send OTP" });
+  }
+};
+
+const verifyOtp = async (req, res) => {
+  try {
+    const phone = normalizePhone(req.body?.phone);
+    const otp = String(req.body?.otp || "").trim();
+
+    if (!isValidPhone(phone)) {
+      return res.status(400).json({ message: "Enter a valid 10-digit phone number" });
+    }
+    if (!otp || otp.length < 4) {
+      return res.status(400).json({ message: "Enter the OTP" });
+    }
+
+    const pending = otpStore.get(phone);
+    if (!pending || pending.expiresAt < Date.now()) {
+      otpStore.delete(phone);
+      return res.status(400).json({ message: "OTP expired. Please request a new one." });
+    }
+
+    if (otp !== pending.otp && otp !== DUMMY_OTP) {
+      return res.status(401).json({ message: "Invalid OTP" });
+    }
+
+    otpStore.delete(phone);
+
+    let user = await User.findOne({ phone }).populate("subscription");
+
+    if (pending.purpose === "register") {
+      if (user) {
+        return res.status(400).json({
+          message: "An account already exists with this number. Please sign in.",
+        });
+      }
+
+      const name = pending.name || String(req.body?.name || "").trim();
+      if (!name) {
+        return res.status(400).json({ message: "Name is required to sign up" });
+      }
+
+      const emailRaw =
+        pending.email ||
+        (typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "");
+      const email = emailRaw || undefined;
+
+      user = await User.create({
+        name,
+        phone,
+        ...(email ? { email } : {}),
+        location: { type: "Point", coordinates: [0, 0] },
+      });
+      user = await User.findById(user._id).populate("subscription");
+    } else {
+      if (!user) {
+        return res.status(404).json({
+          message: "No account found for this number. Please sign up.",
+        });
+      }
+      if (user.isBlocked) {
+        return res.status(403).json({ message: "Account is blocked" });
+      }
+    }
+
+    const { accessToken, refreshToken } = await issueSessionTokens(user, {
+      lastLoginAt: new Date(),
+    });
+
+    return res.status(200).json({
+      message: pending.purpose === "register" ? "Account created successfully" : "Login successful",
+      user: buildAuthUserPayload(user),
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    console.error("VERIFY OTP ERROR 👉", error);
+    if (error?.code === 11000) {
+      return res.status(400).json({ message: "Phone or email already registered" });
+    }
+    return res.status(500).json({ message: "Failed to verify OTP" });
+  }
+};
 
 const logout = async (req, res) => {
   try {
@@ -217,7 +399,8 @@ const getProfile = async (req, res) => {
         profilePicture: user.profilePicture || null,
         verificationStatus: verification.status,
         canVerify: verification.canSubmit && hasActiveBusinessPlan(user),
-        subscription: user.subscription
+        subscription: user.subscription,
+        createdAt: user.createdAt,
       } 
     });
   } catch (error) {
@@ -491,6 +674,8 @@ const changePassword = async (req, res) => {
 export {
   register,
   login,
+  sendOtp,
+  verifyOtp,
   logout,
   refreshAccessToken,
   getProfile,

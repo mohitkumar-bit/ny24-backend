@@ -59,9 +59,21 @@ async function ensureQuotaPeriod(user) {
 }
 
 export async function consumePostQuota(authorId) {
-  const user = await User.findById(authorId);
+  const user = await User.findById(authorId).populate("subscription");
   if (!user) return;
   await ensureQuotaPeriod(user);
+  const postLimit = PLAN_MONTHLY_POST_LIMIT[getPlanFromUser(user)] ?? 1;
+  const postCount = user.monthlyPostCount || 0;
+  const credits = user.extraPostCredits || 0;
+
+  if (postCount >= postLimit && credits > 0) {
+    await User.updateOne(
+      { _id: authorId, quotaMonthKey: getMonthKey(), extraPostCredits: { $gt: 0 } },
+      { $inc: { extraPostCredits: -1, monthlyPostCount: 1 } }
+    );
+    return;
+  }
+
   await User.updateOne(
     { _id: authorId, quotaMonthKey: getMonthKey() },
     { $inc: { monthlyPostCount: 1 } }
@@ -69,9 +81,25 @@ export async function consumePostQuota(authorId) {
 }
 
 export async function consumeFeatureQuota(authorId) {
-  const user = await User.findById(authorId);
+  const user = await User.findById(authorId).populate("subscription");
   if (!user) return;
   await ensureQuotaPeriod(user);
+  const featuredLimit = PLAN_MONTHLY_FEATURED_LIMIT[getPlanFromUser(user)] ?? 0;
+  const featuredCount = user.monthlyFeaturedCount || 0;
+  const credits = user.extraFeatureCredits || 0;
+
+  if (featuredCount >= featuredLimit && credits > 0) {
+    await User.updateOne(
+      {
+        _id: authorId,
+        quotaMonthKey: getMonthKey(),
+        extraFeatureCredits: { $gt: 0 },
+      },
+      { $inc: { extraFeatureCredits: -1, monthlyFeaturedCount: 1 } }
+    );
+    return;
+  }
+
   await User.updateOne(
     { _id: authorId, quotaMonthKey: getMonthKey() },
     { $inc: { monthlyFeaturedCount: 1 } }
@@ -86,6 +114,8 @@ export async function getQuotaForUser(authorId) {
   const featuredCount = user.monthlyFeaturedCount || 0;
   const postLimit = PLAN_MONTHLY_POST_LIMIT[plan] ?? 1;
   const featuredLimit = PLAN_MONTHLY_FEATURED_LIMIT[plan] ?? 0;
+  const extraPostCredits = user.extraPostCredits || 0;
+  const extraFeatureCredits = user.extraFeatureCredits || 0;
 
   return {
     plan,
@@ -93,10 +123,12 @@ export async function getQuotaForUser(authorId) {
     featuredCount,
     postLimit,
     featuredLimit,
+    extraPostCredits,
+    extraFeatureCredits,
     extraPostPrice: ADDON_PRICE_INR,
     extraFeaturePrice: ADDON_PRICE_INR,
-    canPostFree: postCount < postLimit,
-    canFeatureFree: featuredCount < featuredLimit,
+    canPostFree: postCount < postLimit || extraPostCredits > 0,
+    canFeatureFree: featuredCount < featuredLimit || extraFeatureCredits > 0,
   };
 }
 
@@ -186,6 +218,10 @@ export function isAddonKind(kind) {
   ].includes(kind);
 }
 
+export function isCreditKind(kind) {
+  return ["credit_extra_post", "credit_extra_feature"].includes(kind);
+}
+
 export async function fulfillAddonTransaction(transaction, { providerOrderId } = {}) {
   if (transaction.status === "success" && transaction.consumedAt) {
     return { alreadyProcessed: true };
@@ -193,8 +229,28 @@ export async function fulfillAddonTransaction(transaction, { providerOrderId } =
 
   transaction.status = "success";
   transaction.paidAt = new Date();
+  transaction.paymentMethod = "razorpay";
   if (providerOrderId) {
     transaction.providerOrderId = providerOrderId;
+  }
+
+  if (isCreditKind(transaction.kind)) {
+    const field =
+      transaction.kind === "credit_extra_feature"
+        ? "extraFeatureCredits"
+        : "extraPostCredits";
+    await User.findByIdAndUpdate(transaction.user, { $inc: { [field]: 1 } });
+    transaction.consumedAt = new Date();
+    await transaction.save();
+    const user = await User.findById(transaction.user).select(
+      "extraPostCredits extraFeatureCredits"
+    );
+    return {
+      credits: {
+        extraPostCredits: user?.extraPostCredits || 0,
+        extraFeatureCredits: user?.extraFeatureCredits || 0,
+      },
+    };
   }
 
   if (transaction.targetJobId) {

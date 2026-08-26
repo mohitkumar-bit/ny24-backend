@@ -10,8 +10,8 @@ const userSchema = new mongoose.Schema(
 
     email: {
       type: String,
-      required: true,
       unique: true,
+      sparse: true,
       lowercase: true,
       trim: true,
       index: true,
@@ -64,7 +64,7 @@ const userSchema = new mongoose.Schema(
 
     password: {
       type: String,
-      required: true,
+      required: false,
       minlength: 6,
       select: false,
     },
@@ -77,7 +77,7 @@ const userSchema = new mongoose.Schema(
       },
       coordinates: {
         type: [Number], // [lng, lat]
-        required: true,
+        default: [0, 0],
       },
 
       address: String,
@@ -173,6 +173,14 @@ const userSchema = new mongoose.Schema(
       default: 0,
     },
     monthlyFeaturedCount: {
+      type: Number,
+      default: 0,
+    },
+    extraPostCredits: {
+      type: Number,
+      default: 0,
+    },
+    extraFeatureCredits: {
       type: Number,
       default: 0,
     },

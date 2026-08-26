@@ -13,7 +13,7 @@ import {
   createJobFromPayload,
   consumeFeatureQuota,
 } from "../utils/postQuota.js";
-import { createPhonePeCheckout, getPublicBaseUrl } from "../utils/phonepe.js";
+import { createRazorpayOrder } from "../utils/razorpay.js";
 
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -133,41 +133,43 @@ const createAddonOrder = async (req, res) => {
     }
 
     const merchantOrderId = `GS_ADDON_${Date.now()}_${randomUUID().slice(0, 8)}`;
-    const publicBase = getPublicBaseUrl();
-    const redirectUrl = `${publicBase}/api/subscription/phonepe/redirect?merchantOrderId=${encodeURIComponent(merchantOrderId)}`;
 
     await Transaction.create({
       user: authorId,
       plan: quota.plan,
       amount: quote.amount,
       status: "pending",
-      paymentMethod: "phonepe",
-      transactionId: `PHONEPE_${merchantOrderId}`,
+      paymentMethod: "razorpay",
+      transactionId: `RZP_${merchantOrderId}`,
       merchantOrderId,
       kind: quote.kind,
       jobPayload: parsed.payload,
     });
 
-    const payResponse = await createPhonePeCheckout({
+    const payOrder = await createRazorpayOrder({
       merchantOrderId,
       amountInr: quote.amount,
-      redirectUrl,
+      notes: { kind: quote.kind, userId: String(authorId) },
     });
 
-    const checkoutUrl = payResponse?.redirectUrl || payResponse?.redirect_url;
-    if (!checkoutUrl) {
-      return res.status(502).json({ message: "PhonePe did not return a checkout URL" });
-    }
+    await Transaction.updateOne(
+      { merchantOrderId },
+      { providerOrderId: payOrder.razorpayOrderId }
+    );
 
     return res.status(201).json({
       success: true,
       paid: true,
       merchantOrderId,
-      checkoutUrl,
+      razorpayOrderId: payOrder.razorpayOrderId,
+      keyId: payOrder.keyId,
       amount: quote.amount,
+      amountPaise: payOrder.amountPaise,
+      currency: payOrder.currency,
       kind: quote.kind,
       extraPost: quote.extraPost,
       extraFeature: quote.extraFeature,
+      description: "Extra post / boost",
     });
   } catch (error) {
     console.error("CREATE ADDON ORDER ERROR 👉", error);
@@ -208,38 +210,41 @@ const createFeatureOrder = async (req, res) => {
     }
 
     const merchantOrderId = `GS_FEAT_${Date.now()}_${randomUUID().slice(0, 8)}`;
-    const publicBase = getPublicBaseUrl();
-    const redirectUrl = `${publicBase}/api/subscription/phonepe/redirect?merchantOrderId=${encodeURIComponent(merchantOrderId)}`;
 
     await Transaction.create({
       user: userId,
       plan: quota.plan,
       amount: quota.extraFeaturePrice,
       status: "pending",
-      paymentMethod: "phonepe",
-      transactionId: `PHONEPE_${merchantOrderId}`,
+      paymentMethod: "razorpay",
+      transactionId: `RZP_${merchantOrderId}`,
       merchantOrderId,
       kind: "extra_feature",
       targetJobId: job._id,
     });
 
-    const payResponse = await createPhonePeCheckout({
+    const payOrder = await createRazorpayOrder({
       merchantOrderId,
       amountInr: quota.extraFeaturePrice,
-      redirectUrl,
+      notes: { kind: "extra_feature", userId: String(userId), jobId: String(job._id) },
     });
-    const checkoutUrl = payResponse?.redirectUrl || payResponse?.redirect_url;
-    if (!checkoutUrl) {
-      return res.status(502).json({ message: "PhonePe did not return a checkout URL" });
-    }
+
+    await Transaction.updateOne(
+      { merchantOrderId },
+      { providerOrderId: payOrder.razorpayOrderId }
+    );
 
     return res.status(201).json({
       success: true,
       paid: true,
       merchantOrderId,
-      checkoutUrl,
+      razorpayOrderId: payOrder.razorpayOrderId,
+      keyId: payOrder.keyId,
       amount: quota.extraFeaturePrice,
+      amountPaise: payOrder.amountPaise,
+      currency: payOrder.currency,
       kind: "extra_feature",
+      description: "Extra boost",
     });
   } catch (error) {
     console.error("CREATE FEATURE ORDER ERROR 👉", error);

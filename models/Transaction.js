@@ -70,6 +70,8 @@ const transactionSchema = new mongoose.Schema(
         "extra_post",
         "extra_feature",
         "extra_post_and_feature",
+        "credit_extra_post",
+        "credit_extra_feature",
       ],
       default: "subscription",
     },

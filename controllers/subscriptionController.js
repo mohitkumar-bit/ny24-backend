@@ -4,14 +4,16 @@ import Transaction from "../models/Transaction.js";
 import User from "../models/authModal.js";
 import {
   PLAN_PRICING,
-  createPhonePeCheckout,
-  getPhonePeOrderStatus,
-  getPublicBaseUrl,
-  validatePhonePeCallback,
-} from "../utils/phonepe.js";
-import { fulfillAddonTransaction, isAddonKind } from "../utils/postQuota.js";
-
-const SUCCESS_STATES = new Set(["COMPLETED", "SUCCESS", "PAID"]);
+  CREDIT_PRICING,
+  createRazorpayOrder,
+  verifyRazorpaySignature,
+} from "../utils/razorpay.js";
+import {
+  fulfillAddonTransaction,
+  isAddonKind,
+  isCreditKind,
+  getQuotaForUser,
+} from "../utils/postQuota.js";
 
 function buildEndDate(months) {
   const endDate = new Date();
@@ -19,7 +21,15 @@ function buildEndDate(months) {
   return endDate;
 }
 
-async function activatePaidSubscription({ userId, plan, billingCycle, months, merchantOrderId, providerOrderId, amountInr }) {
+async function activatePaidSubscription({
+  userId,
+  plan,
+  billingCycle,
+  months,
+  merchantOrderId,
+  providerOrderId,
+  amountInr,
+}) {
   const existingActive = await Subscription.findOne({
     user: userId,
     status: "active",
@@ -43,7 +53,7 @@ async function activatePaidSubscription({ userId, plan, billingCycle, months, me
     subscription.startDate = startDate;
     subscription.endDate = endDate;
     subscription.status = "active";
-    subscription.paymentProvider = "phonepe";
+    subscription.paymentProvider = "razorpay";
     await subscription.save();
   } else {
     subscription = await Subscription.create({
@@ -53,7 +63,7 @@ async function activatePaidSubscription({ userId, plan, billingCycle, months, me
       startDate,
       endDate,
       status: "active",
-      paymentProvider: "phonepe",
+      paymentProvider: "razorpay",
       providerSubscriptionId: merchantOrderId,
     });
   }
@@ -62,7 +72,7 @@ async function activatePaidSubscription({ userId, plan, billingCycle, months, me
   if (transaction) {
     transaction.subscription = subscription._id;
     transaction.status = "success";
-    transaction.paymentMethod = "phonepe";
+    transaction.paymentMethod = "razorpay";
     transaction.providerOrderId = providerOrderId || transaction.providerOrderId;
     transaction.paidAt = new Date();
     await transaction.save();
@@ -74,8 +84,8 @@ async function activatePaidSubscription({ userId, plan, billingCycle, months, me
       billingCycle,
       amount: amountInr,
       status: "success",
-      paymentMethod: "phonepe",
-      transactionId: `PHONEPE_${merchantOrderId}`,
+      paymentMethod: "razorpay",
+      transactionId: `RZP_${merchantOrderId}`,
       merchantOrderId,
       providerOrderId,
       paidAt: new Date(),
@@ -106,14 +116,41 @@ async function markTransactionFailed(merchantOrderId) {
   }
 }
 
-function isPaymentSuccessful(state) {
-  return SUCCESS_STATES.has(String(state || "").toUpperCase());
+async function fulfillSuccessfulPayment(transaction, { providerOrderId }) {
+  if (isAddonKind(transaction.kind) || isCreditKind(transaction.kind)) {
+    const result = await fulfillAddonTransaction(transaction, { providerOrderId });
+    return {
+      status: "success",
+      kind: transaction.kind,
+      job: result.job || null,
+      jobId: result.job?._id || result.featuredJobId || transaction.consumedJobId,
+      credits: result.credits || null,
+      transaction,
+    };
+  }
+
+  const pricing = PLAN_PRICING[transaction.plan] || PLAN_PRICING.pro;
+  const result = await activatePaidSubscription({
+    userId: String(transaction.user),
+    plan: transaction.plan,
+    billingCycle: transaction.billingCycle || pricing.billingCycle,
+    months: pricing.months,
+    merchantOrderId: transaction.merchantOrderId,
+    providerOrderId,
+    amountInr: transaction.amount,
+  });
+
+  return {
+    status: "success",
+    subscription: result.subscription,
+    transaction: result.transaction,
+  };
 }
 
-/** @deprecated Prefer PhonePe create-order flow */
+/** @deprecated Prefer Razorpay create-order flow */
 export const createSubscription = async (req, res) => {
   return res.status(400).json({
-    message: "Dummy subscribe is disabled. Use PhonePe checkout via /subscription/create-order.",
+    message: "Dummy subscribe is disabled. Use Razorpay checkout via /subscription/create-order.",
   });
 };
 
@@ -139,9 +176,9 @@ export const getSubscriptionStatus = async (req, res) => {
 };
 
 /**
- * Create a PhonePe Standard Checkout order for Pro/Business.
+ * Create a Razorpay order for Pro/Business subscription.
  */
-export const createPhonePeOrder = async (req, res) => {
+export const createPaymentOrder = async (req, res) => {
   try {
     const userId = req.user.id;
     const { plan } = req.body;
@@ -152,8 +189,6 @@ export const createPhonePeOrder = async (req, res) => {
     }
 
     const merchantOrderId = `GS_${Date.now()}_${randomUUID().slice(0, 8)}`;
-    const publicBase = getPublicBaseUrl();
-    const redirectUrl = `${publicBase}/api/subscription/phonepe/redirect?merchantOrderId=${encodeURIComponent(merchantOrderId)}`;
 
     const subscription = await Subscription.create({
       user: userId,
@@ -162,7 +197,7 @@ export const createPhonePeOrder = async (req, res) => {
       startDate: new Date(),
       endDate: buildEndDate(pricing.months),
       status: "pending",
-      paymentProvider: "phonepe",
+      paymentProvider: "razorpay",
       providerSubscriptionId: merchantOrderId,
     });
 
@@ -173,49 +208,133 @@ export const createPhonePeOrder = async (req, res) => {
       billingCycle: pricing.billingCycle,
       amount: pricing.amountInr,
       status: "pending",
-      paymentMethod: "phonepe",
-      transactionId: `PHONEPE_${merchantOrderId}`,
+      paymentMethod: "razorpay",
+      transactionId: `RZP_${merchantOrderId}`,
       merchantOrderId,
+      kind: "subscription",
     });
 
-    const payResponse = await createPhonePeCheckout({
+    const payOrder = await createRazorpayOrder({
       merchantOrderId,
       amountInr: pricing.amountInr,
-      redirectUrl,
+      notes: { plan, kind: "subscription", userId: String(userId) },
     });
 
-    const checkoutUrl = payResponse?.redirectUrl || payResponse?.redirect_url;
-    if (!checkoutUrl) {
-      await markTransactionFailed(merchantOrderId);
-      return res.status(502).json({
-        message: "PhonePe did not return a checkout URL",
-        details: payResponse,
-      });
-    }
+    await Transaction.updateOne(
+      { merchantOrderId },
+      { providerOrderId: payOrder.razorpayOrderId }
+    );
 
     return res.status(201).json({
       merchantOrderId,
-      checkoutUrl,
+      razorpayOrderId: payOrder.razorpayOrderId,
+      keyId: payOrder.keyId,
       amount: pricing.amountInr,
+      amountPaise: payOrder.amountPaise,
+      currency: payOrder.currency,
       plan,
       billingCycle: pricing.billingCycle,
       months: pricing.months,
+      description: `${pricing.label} plan`,
     });
   } catch (error) {
-    console.error("Error creating PhonePe order:", error);
+    console.error("Error creating Razorpay order:", error);
+    const statusCode = error?.statusCode || error?.status;
+    const description =
+      error?.error?.description || error?.message || "Failed to create payment order";
+
+    if (statusCode === 401) {
+      return res.status(502).json({
+        message:
+          "Razorpay authentication failed. Check RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in .env (copy both again from Razorpay Dashboard → API Keys).",
+        code: "RAZORPAY_AUTH_FAILED",
+      });
+    }
+
+    return res.status(500).json({ message: description });
+  }
+};
+
+/**
+ * Create a Razorpay order for Extra Ad / Extra Boost credits (website).
+ */
+export const createCreditOrder = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { kind } = req.body;
+    const pricing = CREDIT_PRICING[kind];
+    if (!pricing) {
+      return res.status(400).json({
+        message: "Invalid credit kind. Use credit_extra_post or credit_extra_feature.",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const quota = await getQuotaForUser(userId);
+    if (quota.plan !== "pro" && quota.plan !== "business") {
+      return res.status(403).json({
+        message: "Extra Ad and Extra Boost require an active Pro or Business plan.",
+      });
+    }
+
+    const merchantOrderId = `GS_CREDIT_${Date.now()}_${randomUUID().slice(0, 8)}`;
+
+    await Transaction.create({
+      user: userId,
+      plan: quota.plan,
+      amount: pricing.amountInr,
+      status: "pending",
+      paymentMethod: "razorpay",
+      transactionId: `RZP_${merchantOrderId}`,
+      merchantOrderId,
+      kind,
+    });
+
+    const payOrder = await createRazorpayOrder({
+      merchantOrderId,
+      amountInr: pricing.amountInr,
+      notes: { kind, userId: String(userId) },
+    });
+
+    await Transaction.updateOne(
+      { merchantOrderId },
+      { providerOrderId: payOrder.razorpayOrderId }
+    );
+
+    return res.status(201).json({
+      merchantOrderId,
+      razorpayOrderId: payOrder.razorpayOrderId,
+      keyId: payOrder.keyId,
+      amount: pricing.amountInr,
+      amountPaise: payOrder.amountPaise,
+      currency: payOrder.currency,
+      kind,
+      description: pricing.label,
+    });
+  } catch (error) {
+    console.error("Error creating credit order:", error);
     return res.status(500).json({
-      message: error?.message || "Failed to create PhonePe order",
+      message: error?.message || "Failed to create credit order",
     });
   }
 };
 
 /**
- * Confirm payment with PhonePe order status and activate subscription.
+ * Confirm Razorpay payment via checkout signature and activate plan/credits.
  */
-export const verifyPhonePeOrder = async (req, res) => {
+export const verifyPaymentOrder = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { merchantOrderId } = req.body;
+    const {
+      merchantOrderId,
+      razorpay_order_id: razorpayOrderId,
+      razorpay_payment_id: razorpayPaymentId,
+      razorpay_signature: razorpaySignature,
+    } = req.body;
 
     if (!merchantOrderId) {
       return res.status(400).json({ message: "merchantOrderId is required" });
@@ -227,7 +346,7 @@ export const verifyPhonePeOrder = async (req, res) => {
     }
 
     if (transaction.status === "success") {
-      if (isAddonKind(transaction.kind)) {
+      if (isAddonKind(transaction.kind) || isCreditKind(transaction.kind)) {
         return res.json({
           status: "success",
           kind: transaction.kind,
@@ -243,78 +362,48 @@ export const verifyPhonePeOrder = async (req, res) => {
       });
     }
 
-    const orderStatus = await getPhonePeOrderStatus(merchantOrderId);
-    const state = orderStatus?.state || orderStatus?.orderState || orderStatus?.paymentState;
+    const orderId = razorpayOrderId || transaction.providerOrderId;
+    const valid = verifyRazorpaySignature({
+      razorpayOrderId: orderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    });
 
-    if (isPaymentSuccessful(state)) {
-      if (isAddonKind(transaction.kind)) {
-        const result = await fulfillAddonTransaction(transaction, {
-          providerOrderId: orderStatus?.orderId,
-        });
-        return res.json({
-          status: "success",
-          kind: transaction.kind,
-          job: result.job || null,
-          jobId: result.job?._id || result.featuredJobId || transaction.consumedJobId,
-          transaction,
-        });
-      }
-
-      const pricing = PLAN_PRICING[transaction.plan] || PLAN_PRICING.pro;
-      const result = await activatePaidSubscription({
-        userId,
-        plan: transaction.plan,
-        billingCycle: transaction.billingCycle || pricing.billingCycle,
-        months: pricing.months,
-        merchantOrderId,
-        providerOrderId: orderStatus?.orderId || orderStatus?.paymentDetails?.[0]?.transactionId,
-        amountInr: transaction.amount,
-      });
-
-      return res.json({
-        status: "success",
-        state,
-        subscription: result.subscription,
-        transaction: result.transaction,
+    if (!valid) {
+      return res.status(400).json({
+        status: "failed",
+        message: "Invalid payment signature",
       });
     }
 
-    const failedStates = new Set(["FAILED", "PAYMENT_ERROR", "DECLINED", "CANCELLED", "CANCELED"]);
-    if (failedStates.has(String(state || "").toUpperCase())) {
-      await markTransactionFailed(merchantOrderId);
-      return res.json({ status: "failed", state });
-    }
+    const result = await fulfillSuccessfulPayment(transaction, {
+      providerOrderId: razorpayPaymentId || orderId,
+    });
 
-    return res.json({ status: "pending", state: state || "PENDING" });
+    return res.json(result);
   } catch (error) {
-    console.error("Error verifying PhonePe order:", error);
+    console.error("Error verifying Razorpay order:", error);
     return res.status(500).json({
       message: error?.message || "Failed to verify payment",
     });
   }
 };
 
+/** Aliases kept for older clients / route names */
+export const createPhonePeOrder = createPaymentOrder;
+export const verifyPhonePeOrder = verifyPaymentOrder;
+
 /**
- * Browser landing page after PhonePe checkout.
- * Opens the native app via deep link (Android intent + gigseva://).
- * Never auto-redirects to localhost WEB_APP_URL.
+ * Optional browser return page after payment (Razorpay Checkout is usually modal).
  */
-export const phonePeRedirect = async (req, res) => {
+export const paymentReturn = async (req, res) => {
   const merchantOrderId = String(req.query.merchantOrderId || "");
   const encodedId = encodeURIComponent(merchantOrderId);
-  const deepLink = `gigseva://payment?merchantOrderId=${encodedId}`;
-  // Android Chrome often blocks custom schemes — Intent URL is more reliable
-  const androidIntent =
-    `intent://payment?merchantOrderId=${encodedId}` +
-    `#Intent;scheme=gigseva;package=com.tripledots.geegseva;end`;
-
   const rawWeb = (process.env.WEB_APP_URL || "").replace(/\/$/, "");
-  const isLocalWeb =
-    !rawWeb ||
-    /localhost|127\.0\.0\.1/i.test(rawWeb);
+  const isLocalWeb = !rawWeb || /localhost|127\.0\.0\.1/i.test(rawWeb);
   const webReturn =
     !isLocalWeb && rawWeb
-      ? `${rawWeb}/payment?merchantOrderId=${encodedId}`
+      ? `${rawWeb}/dashboard.html#subscription`
       : "";
 
   res.setHeader("Content-Type", "text/html");
@@ -335,99 +424,19 @@ export const phonePeRedirect = async (req, res) => {
 <body>
   <div class="card">
     <h1>Payment complete</h1>
-    <p>Tap below to return to the gigSEVA app and confirm your plan.</p>
-    <a id="openApp" href="${deepLink}">Open gigSEVA app</a>
+    <p>You can return to your account to see the updated plan.</p>
+    ${webReturn ? `<a href="${webReturn}">Back to dashboard</a>` : ""}
+    <p style="font-size:12px;margin-top:16px;word-break:break-all;">Order: ${merchantOrderId || "—"}</p>
   </div>
-  <script>
-    (function () {
-      var deepLink = ${JSON.stringify(deepLink)};
-      var androidIntent = ${JSON.stringify(androidIntent)};
-      var isAndroid = /Android/i.test(navigator.userAgent);
-      var target = isAndroid ? androidIntent : deepLink;
-      document.getElementById('openApp').setAttribute('href', target);
-      // Auto-open app — do NOT fall back to localhost web
-      setTimeout(function () { window.location.href = target; }, 300);
-      setTimeout(function () { window.location.href = deepLink; }, 900);
-    })();
-  </script>
 </body>
 </html>`);
 };
 
-/**
- * Server-to-server callback from PhonePe (configure this URL in PhonePe dashboard via ngrok).
- */
-export const phonePeCallback = async (req, res) => {
-  try {
-    const rawBody = typeof req.body === "string" ? req.body : JSON.stringify(req.body || {});
-    const authHeader =
-      req.headers["authorization"] ||
-      req.headers["x-verify"] ||
-      req.headers["x-phonepe-signature"] ||
-      "";
-
-    let merchantOrderId =
-      req.body?.payload?.merchantOrderId ||
-      req.body?.payload?.orderId ||
-      req.body?.merchantOrderId ||
-      null;
-    let state = req.body?.payload?.state || req.body?.state || null;
-
-    const validated = validatePhonePeCallback(authHeader, rawBody);
-    if (validated?.payload) {
-      merchantOrderId =
-        validated.payload.merchantOrderId ||
-        validated.payload.orderId ||
-        merchantOrderId;
-      state = validated.payload.state || state;
-    }
-
-    if (!merchantOrderId) {
-      return res.status(400).json({ message: "Invalid callback payload" });
-    }
-
-    const transaction = await Transaction.findOne({ merchantOrderId });
-    if (!transaction) {
-      return res.status(404).json({ message: "Order not found" });
-    }
-
-    if (transaction.status === "success") {
-      return res.json({ success: true, alreadyProcessed: true });
-    }
-
-    // Prefer live status check over trusting callback body alone
-    const orderStatus = await getPhonePeOrderStatus(merchantOrderId);
-    state = orderStatus?.state || state;
-
-    if (isPaymentSuccessful(state)) {
-      if (isAddonKind(transaction.kind)) {
-        await fulfillAddonTransaction(transaction, {
-          providerOrderId: orderStatus?.orderId,
-        });
-        return res.json({ success: true, status: "success", kind: transaction.kind });
-      }
-
-      const pricing = PLAN_PRICING[transaction.plan] || PLAN_PRICING.pro;
-      await activatePaidSubscription({
-        userId: String(transaction.user),
-        plan: transaction.plan,
-        billingCycle: transaction.billingCycle || pricing.billingCycle,
-        months: pricing.months,
-        merchantOrderId,
-        providerOrderId: orderStatus?.orderId,
-        amountInr: transaction.amount,
-      });
-      return res.json({ success: true, status: "success" });
-    }
-
-    if (["FAILED", "PAYMENT_ERROR", "DECLINED", "CANCELLED", "CANCELED"].includes(String(state || "").toUpperCase())) {
-      await markTransactionFailed(merchantOrderId);
-      return res.json({ success: true, status: "failed" });
-    }
-
-    return res.json({ success: true, status: "pending", state });
-  } catch (error) {
-    console.error("PhonePe callback error:", error);
-    return res.status(500).json({ message: "Callback processing failed" });
-  }
+/** @deprecated PhonePe callback removed */
+export const phonePeCallback = async (_req, res) => {
+  return res.status(410).json({
+    message: "PhonePe is no longer supported. Use Razorpay checkout.",
+  });
 };
+
+export const phonePeRedirect = paymentReturn;

@@ -2,6 +2,8 @@ import express from "express";
 import {
   register,
   login,
+  sendOtp,
+  verifyOtp,
   logout,
   refreshAccessToken,
   getProfile,
@@ -34,6 +36,8 @@ router.delete("/profile-picture", authMiddleware, removeProfilePictureHandler);
 router.post("/change-password", authMiddleware, changePassword);
 router.post("/register", register);
 router.post("/login", login);
+router.post("/otp/send", sendOtp);
+router.post("/otp/verify", verifyOtp);
 router.post("/logout", authMiddleware, logout);
 router.post("/refresh", refreshAccessToken);
 
