@@ -153,6 +153,15 @@ const userSchema = new mongoose.Schema(
       selfieUrl: String,
       aadhaarUrl: String,
       panUrl: String,
+      maskedAadhaar: String,
+      aadhaarVerifiedAt: Date,
+      aadhaarOtpSession: {
+        referenceId: String,
+        requestId: String,
+        maskedAadhaar: String,
+        sentAt: Date,
+        expiresAt: Date,
+      },
       rejectionReason: String,
     },
 
@@ -181,6 +190,14 @@ const userSchema = new mongoose.Schema(
       default: 0,
     },
     extraFeatureCredits: {
+      type: Number,
+      default: 0,
+    },
+    videoPostCredits: {
+      type: Number,
+      default: 0,
+    },
+    bannerAdCredits: {
       type: Number,
       default: 0,
     },

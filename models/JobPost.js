@@ -61,6 +61,30 @@ const jobPostSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    isVideoPost: {
+      type: Boolean,
+      default: false,
+    },
+    videoUrl: {
+      type: String,
+      default: null,
+    },
+    videoExpiresAt: {
+      type: Date,
+      default: null,
+    },
+    isBannerAd: {
+      type: Boolean,
+      default: false,
+    },
+    bannerUrl: {
+      type: String,
+      default: null,
+    },
+    bannerExpiresAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );

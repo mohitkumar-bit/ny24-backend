@@ -3,6 +3,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import User from "../models/authModal.js";
 import { formatVerificationForClient, hasActiveBusinessPlan } from "../utils/verificationHelpers.js";
+import { getQuotaForUser } from "../utils/postQuota.js";
 import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.js";
 
 const formatUserLocationResponse = (user) => {
@@ -384,6 +385,7 @@ const getProfile = async (req, res) => {
     
     const verification = formatVerificationForClient(user);
     const { location, locationDetails } = formatUserLocationResponse(user);
+    const quota = await getQuotaForUser(user._id);
     res.status(200).json({ 
       success: true, 
       user: {
@@ -400,6 +402,7 @@ const getProfile = async (req, res) => {
         verificationStatus: verification.status,
         canVerify: verification.canSubmit && hasActiveBusinessPlan(user),
         subscription: user.subscription,
+        quota,
         createdAt: user.createdAt,
       } 
     });

@@ -17,6 +17,8 @@ const listPending = async (req, res) => {
       email: u.email,
       submittedAt: u.verification?.submittedAt,
       canApprove: canAdminApprove(u.verification?.submittedAt),
+      maskedAadhaar: u.verification?.maskedAadhaar,
+      aadhaarVerifiedAt: u.verification?.aadhaarVerifiedAt,
       selfieUrl: u.verification?.selfieUrl,
       aadhaarUrl: u.verification?.aadhaarUrl,
       panUrl: u.verification?.panUrl,

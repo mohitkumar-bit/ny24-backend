@@ -7,12 +7,17 @@ import {
   updateJob,
   deleteJob,
   uploadJobImageHandler,
+  uploadJobVideoHandler,
+  createVideoJob,
+  createBannerJob,
   getQuota,
   createAddonOrder,
   createFeatureOrder,
+  streamJobVideo,
 } from "../controllers/jobController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import { uploadJobImage } from "../middleware/uploadJobImage.js";
+import { uploadJobVideo } from "../middleware/uploadJobVideo.js";
 
 const router = express.Router();
 
@@ -29,12 +34,28 @@ router.post(
   },
   uploadJobImageHandler
 );
+router.post(
+  "/upload-video",
+  authMiddleware,
+  (req, res, next) => {
+    uploadJobVideo(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({ message: err.message || "Invalid upload" });
+      }
+      next();
+    });
+  },
+  uploadJobVideoHandler
+);
+router.post("/video", authMiddleware, createVideoJob);
+router.post("/banner", authMiddleware, createBannerJob);
 router.post("/", authMiddleware, createJob);
 router.get("/quota", authMiddleware, getQuota);
 router.post("/addon-order", authMiddleware, createAddonOrder);
 router.post("/:id/feature-order", authMiddleware, createFeatureOrder);
 router.get("/", authMiddleware, getJobs);
 router.get("/me", authMiddleware, getMyJobs);
+router.get("/:id/video-stream", streamJobVideo);
 router.get("/:id", getJobById);
 router.put("/:id", authMiddleware, updateJob);
 router.delete("/:id", authMiddleware, deleteJob);

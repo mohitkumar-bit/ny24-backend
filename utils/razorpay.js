@@ -1,8 +1,6 @@
 import crypto from "crypto";
 import Razorpay from "razorpay";
 
-let clientInstance = null;
-
 export const PLAN_PRICING = {
   pro: {
     amountInr: 99,
@@ -27,13 +25,32 @@ export const CREDIT_PRICING = {
     amountInr: 99,
     label: "Extra Boost",
   },
+  credit_video_post: {
+    amountInr: 1999,
+    label: "Video Promotion",
+  },
+  credit_banner_ad: {
+    amountInr: 999,
+    label: "Banner Promotion",
+  },
 };
 
-export function getRazorpayClient() {
-  if (clientInstance) return clientInstance;
+let clientInstance = null;
+let cachedCredentialKey = "";
 
+export function resetRazorpayClient() {
+  clientInstance = null;
+  cachedCredentialKey = "";
+}
+
+export function getRazorpayClient() {
   const keyId = String(process.env.RAZORPAY_KEY_ID || "").trim();
   const keySecret = String(process.env.RAZORPAY_KEY_SECRET || "").trim();
+  const credentialKey = `${keyId}::${keySecret}`;
+
+  if (clientInstance && cachedCredentialKey === credentialKey) {
+    return clientInstance;
+  }
 
   if (!keyId || !keySecret) {
     throw new Error(
@@ -45,6 +62,7 @@ export function getRazorpayClient() {
     key_id: keyId,
     key_secret: keySecret,
   });
+  cachedCredentialKey = credentialKey;
   return clientInstance;
 }
 

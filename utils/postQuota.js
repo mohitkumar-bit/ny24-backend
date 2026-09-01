@@ -1,11 +1,13 @@
 import JobPost from "../models/JobPost.js";
 import User from "../models/authModal.js";
 import { isFeaturedActive } from "./featured.js";
+import { getVideoExpiresAt, VIDEO_POST_PRICE_INR } from "./videoPost.js";
+import { getBannerExpiresAt, BANNER_AD_PRICE_INR } from "./bannerPost.js";
 
 export const PLAN_MONTHLY_POST_LIMIT = {
   free: 1,
   pro: 1,
-  business: 3,
+  business: 1,
 };
 
 export const PLAN_MONTHLY_FEATURED_LIMIT = {
@@ -69,7 +71,7 @@ export async function consumePostQuota(authorId) {
   if (postCount >= postLimit && credits > 0) {
     await User.updateOne(
       { _id: authorId, quotaMonthKey: getMonthKey(), extraPostCredits: { $gt: 0 } },
-      { $inc: { extraPostCredits: -1, monthlyPostCount: 1 } }
+      { $inc: { extraPostCredits: -1 } }
     );
     return;
   }
@@ -95,7 +97,7 @@ export async function consumeFeatureQuota(authorId) {
         quotaMonthKey: getMonthKey(),
         extraFeatureCredits: { $gt: 0 },
       },
-      { $inc: { extraFeatureCredits: -1, monthlyFeaturedCount: 1 } }
+      { $inc: { extraFeatureCredits: -1 } }
     );
     return;
   }
@@ -116,6 +118,10 @@ export async function getQuotaForUser(authorId) {
   const featuredLimit = PLAN_MONTHLY_FEATURED_LIMIT[plan] ?? 0;
   const extraPostCredits = user.extraPostCredits || 0;
   const extraFeatureCredits = user.extraFeatureCredits || 0;
+  const videoPostCredits = user.videoPostCredits || 0;
+  const bannerAdCredits = user.bannerAdCredits || 0;
+  const subscriptionPostsRemaining = Math.max(0, postLimit - postCount);
+  const subscriptionFeaturesRemaining = Math.max(0, featuredLimit - featuredCount);
 
   return {
     plan,
@@ -125,10 +131,20 @@ export async function getQuotaForUser(authorId) {
     featuredLimit,
     extraPostCredits,
     extraFeatureCredits,
+    videoPostCredits,
+    bannerAdCredits,
+    subscriptionPostsUsed: postCount,
+    subscriptionPostsRemaining,
+    subscriptionFeaturesUsed: featuredCount,
+    subscriptionFeaturesRemaining,
     extraPostPrice: ADDON_PRICE_INR,
     extraFeaturePrice: ADDON_PRICE_INR,
-    canPostFree: postCount < postLimit || extraPostCredits > 0,
-    canFeatureFree: featuredCount < featuredLimit || extraFeatureCredits > 0,
+    videoPostPrice: VIDEO_POST_PRICE_INR,
+    bannerAdPrice: BANNER_AD_PRICE_INR,
+    canPostFree: subscriptionPostsRemaining > 0 || extraPostCredits > 0,
+    canFeatureFree: subscriptionFeaturesRemaining > 0 || extraFeatureCredits > 0,
+    canPublishVideoPost: videoPostCredits > 0,
+    canPublishBannerAd: bannerAdCredits > 0,
   };
 }
 
@@ -210,6 +226,62 @@ export async function createJobFromPayload(authorId, payload, { isFeatured }) {
   return job;
 }
 
+export async function consumeVideoPostCredit(authorId) {
+  await User.updateOne(
+    { _id: authorId, videoPostCredits: { $gt: 0 } },
+    { $inc: { videoPostCredits: -1 } }
+  );
+}
+
+export async function createVideoJobFromPayload(authorId, payload, videoUrl) {
+  const publishedAt = new Date();
+  const job = await JobPost.create({
+    author: authorId,
+    title: payload.title,
+    description: payload.description,
+    categories: payload.categories,
+    price: payload.price,
+    location: payload.location,
+    images: payload.images || [],
+    isFeatured: false,
+    featuredAt: null,
+    isVideoPost: true,
+    videoUrl,
+    videoExpiresAt: getVideoExpiresAt(publishedAt),
+    requirements: payload.requirements,
+  });
+  await consumeVideoPostCredit(authorId);
+  return job;
+}
+
+export async function consumeBannerAdCredit(authorId) {
+  await User.updateOne(
+    { _id: authorId, bannerAdCredits: { $gt: 0 } },
+    { $inc: { bannerAdCredits: -1 } }
+  );
+}
+
+export async function createBannerJobFromPayload(authorId, payload, bannerUrl) {
+  const publishedAt = new Date();
+  const job = await JobPost.create({
+    author: authorId,
+    title: payload.title,
+    description: payload.description,
+    categories: payload.categories,
+    price: payload.price,
+    location: payload.location,
+    images: payload.images || [],
+    isFeatured: false,
+    featuredAt: null,
+    isBannerAd: true,
+    bannerUrl,
+    bannerExpiresAt: getBannerExpiresAt(publishedAt),
+    requirements: payload.requirements,
+  });
+  await consumeBannerAdCredit(authorId);
+  return job;
+}
+
 export function isAddonKind(kind) {
   return [
     "extra_post",
@@ -219,7 +291,12 @@ export function isAddonKind(kind) {
 }
 
 export function isCreditKind(kind) {
-  return ["credit_extra_post", "credit_extra_feature"].includes(kind);
+  return [
+    "credit_extra_post",
+    "credit_extra_feature",
+    "credit_video_post",
+    "credit_banner_ad",
+  ].includes(kind);
 }
 
 export async function fulfillAddonTransaction(transaction, { providerOrderId } = {}) {
@@ -238,17 +315,23 @@ export async function fulfillAddonTransaction(transaction, { providerOrderId } =
     const field =
       transaction.kind === "credit_extra_feature"
         ? "extraFeatureCredits"
-        : "extraPostCredits";
+        : transaction.kind === "credit_video_post"
+          ? "videoPostCredits"
+          : transaction.kind === "credit_banner_ad"
+            ? "bannerAdCredits"
+            : "extraPostCredits";
     await User.findByIdAndUpdate(transaction.user, { $inc: { [field]: 1 } });
     transaction.consumedAt = new Date();
     await transaction.save();
     const user = await User.findById(transaction.user).select(
-      "extraPostCredits extraFeatureCredits"
+      "extraPostCredits extraFeatureCredits videoPostCredits bannerAdCredits"
     );
     return {
       credits: {
         extraPostCredits: user?.extraPostCredits || 0,
         extraFeatureCredits: user?.extraFeatureCredits || 0,
+        videoPostCredits: user?.videoPostCredits || 0,
+        bannerAdCredits: user?.bannerAdCredits || 0,
       },
     };
   }

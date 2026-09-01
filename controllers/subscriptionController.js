@@ -265,7 +265,8 @@ export const createCreditOrder = async (req, res) => {
     const pricing = CREDIT_PRICING[kind];
     if (!pricing) {
       return res.status(400).json({
-        message: "Invalid credit kind. Use credit_extra_post or credit_extra_feature.",
+        message:
+          "Invalid credit kind. Use credit_extra_post, credit_extra_feature, credit_video_post, or credit_banner_ad.",
       });
     }
 
@@ -275,11 +276,6 @@ export const createCreditOrder = async (req, res) => {
     }
 
     const quota = await getQuotaForUser(userId);
-    if (quota.plan !== "pro" && quota.plan !== "business") {
-      return res.status(403).json({
-        message: "Extra Ad and Extra Boost require an active Pro or Business plan.",
-      });
-    }
 
     const merchantOrderId = `GS_CREDIT_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
@@ -317,8 +313,16 @@ export const createCreditOrder = async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating credit order:", error);
+    const statusCode = error?.statusCode || error?.status;
+    if (statusCode === 401) {
+      return res.status(502).json({
+        message:
+          "Razorpay authentication failed. Copy Key Id + Key Secret again from Razorpay Dashboard (Test mode) into .env, then restart the backend.",
+        code: "RAZORPAY_AUTH_FAILED",
+      });
+    }
     return res.status(500).json({
-      message: error?.message || "Failed to create credit order",
+      message: error?.error?.description || error?.message || "Failed to create credit order",
     });
   }
 };

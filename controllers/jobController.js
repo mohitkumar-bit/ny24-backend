@@ -6,11 +6,17 @@ import { randomUUID } from "crypto";
 import { distanceKm, hasValidCoordinates } from "../utils/distance.js";
 import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.js";
 import { isFeaturedActive } from "../utils/featured.js";
+import { isVideoPostActive } from "../utils/videoPost.js";
+import { isBannerAdActive } from "../utils/bannerPost.js";
+import { uploadVideoToS3, isS3Configured, getVideoObjectFromS3 } from "../utils/s3.js";
+import { assertVideoWithinLimit } from "../utils/videoValidation.js";
 import {
   getQuotaForUser,
   quoteAddon,
   sanitizeJobFields,
   createJobFromPayload,
+  createVideoJobFromPayload,
+  createBannerJobFromPayload,
   consumeFeatureQuota,
 } from "../utils/postQuota.js";
 import { createRazorpayOrder } from "../utils/razorpay.js";
@@ -322,12 +328,19 @@ const getJobs = async (req, res) => {
       const verifiedBoost =
         verifiedOnly === "true" && isVerifiedAuthor ? 40 * distanceScore : 0;
 
+      const videoActive = isVideoPostActive(job);
+      const videoBoost = videoActive ? 50 * distanceScore : 0;
+      const bannerActive = isBannerAdActive(job);
+      const bannerBoost = bannerActive ? 45 * distanceScore : 0;
+
       const rankingScore =
         100 * skillMatchScore +
         60 * distanceScore +
         premiumBoost +
         recencyScore +
-        verifiedBoost;
+        verifiedBoost +
+        videoBoost +
+        bannerBoost;
 
       const isFeatured = isFeaturedActive(job);
 
@@ -335,6 +348,10 @@ const getJobs = async (req, res) => {
         ...job,
         distanceKm: km == null ? null : Math.round(km * 10) / 10,
         isFeatured,
+        isVideoPost: videoActive,
+        isVideoActive: videoActive,
+        isBannerAd: bannerActive,
+        isBannerActive: bannerActive,
         isVerifiedAuthor,
         rankingScore,
       };
@@ -363,6 +380,46 @@ const getJobs = async (req, res) => {
   }
 };
 
+const streamJobVideo = async (req, res) => {
+  try {
+    const job = await JobPost.findById(req.params.id).select("videoUrl isVideoPost");
+    if (!job?.videoUrl || !job.isVideoPost) {
+      return res.status(404).json({ message: "Video not found" });
+    }
+
+    const rangeHeader = req.headers.range;
+    const object = await getVideoObjectFromS3(job.videoUrl, rangeHeader);
+    const contentType = object.ContentType || "video/mp4";
+
+    if (rangeHeader && object.ContentRange) {
+      res.status(206);
+      res.setHeader("Content-Range", object.ContentRange);
+    } else {
+      res.status(200);
+    }
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Accept-Ranges", "bytes");
+    if (object.ContentLength != null) {
+      res.setHeader("Content-Length", String(object.ContentLength));
+    }
+    res.setHeader("Cache-Control", "public, max-age=3600");
+
+    if (typeof object.Body?.pipe === "function") {
+      object.Body.pipe(res);
+      return;
+    }
+
+    const bytes = await object.Body.transformToByteArray();
+    res.end(Buffer.from(bytes));
+  } catch (error) {
+    console.error("STREAM JOB VIDEO ERROR 👉", error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Could not stream video" });
+    }
+  }
+};
+
 const getJobById = async (req, res) => {
   try {
     const job = await JobPost.findById(req.params.id)
@@ -377,6 +434,10 @@ const getJobById = async (req, res) => {
     res.status(200).json({
       ...jobObj,
       isFeatured: isFeaturedActive(jobObj),
+      isVideoPost: isVideoPostActive(jobObj),
+      isVideoActive: isVideoPostActive(jobObj),
+      isBannerAd: isBannerAdActive(jobObj),
+      isBannerActive: isBannerAdActive(jobObj),
     });
   } catch (error) {
     res.status(500).json({ message: "Server error" });
@@ -391,13 +452,33 @@ const getMyJobs = async (req, res) => {
       .sort("-createdAt");
 
     // Drop featured flag after 30 days so home feed and My Ads stay in sync
-    const expiredIds = jobs
+    const expiredFeaturedIds = jobs
       .filter((j) => j.isFeatured && !isFeaturedActive(j))
       .map((j) => j._id);
-    if (expiredIds.length > 0) {
+    if (expiredFeaturedIds.length > 0) {
       await JobPost.updateMany(
-        { _id: { $in: expiredIds } },
+        { _id: { $in: expiredFeaturedIds } },
         { $set: { isFeatured: false } }
+      );
+    }
+
+    const expiredVideoIds = jobs
+      .filter((j) => j.isVideoPost && !isVideoPostActive(j))
+      .map((j) => j._id);
+    if (expiredVideoIds.length > 0) {
+      await JobPost.updateMany(
+        { _id: { $in: expiredVideoIds } },
+        { $set: { isVideoPost: false } }
+      );
+    }
+
+    const expiredBannerIds = jobs
+      .filter((j) => j.isBannerAd && !isBannerAdActive(j))
+      .map((j) => j._id);
+    if (expiredBannerIds.length > 0) {
+      await JobPost.updateMany(
+        { _id: { $in: expiredBannerIds } },
+        { $set: { isBannerAd: false } }
       );
     }
 
@@ -407,6 +488,10 @@ const getMyJobs = async (req, res) => {
         return {
           ...jobObj,
           isFeatured: isFeaturedActive(jobObj),
+          isVideoPost: isVideoPostActive(jobObj),
+          isVideoActive: isVideoPostActive(jobObj),
+          isBannerAd: isBannerAdActive(jobObj),
+          isBannerActive: isBannerAdActive(jobObj),
         };
       })
     );
@@ -521,15 +606,131 @@ const uploadJobImageHandler = async (req, res) => {
   }
 };
 
+const uploadJobVideoHandler = async (req, res) => {
+  try {
+    if (!isS3Configured()) {
+      return res.status(503).json({
+        message: "Video upload is not configured. Add AWS S3 credentials to the server.",
+      });
+    }
+
+    if (!req.file?.buffer) {
+      return res.status(400).json({ message: "Video file is required" });
+    }
+
+    const durationCheck = await assertVideoWithinLimit(
+      req.file.buffer,
+      req.file.mimetype,
+      req.body?.durationSeconds
+    );
+    if (!durationCheck.ok) {
+      return res.status(400).json({ message: durationCheck.message });
+    }
+
+    const { url } = await uploadVideoToS3(
+      req.file.buffer,
+      req.file.mimetype,
+      req.user.id
+    );
+
+    res.status(200).json({ success: true, videoUrl: url });
+  } catch (error) {
+    console.error("UPLOAD JOB VIDEO ERROR 👉", error);
+    res.status(500).json({ message: error.message || "Failed to upload video" });
+  }
+};
+
+const createVideoJob = async (req, res) => {
+  try {
+    const authorId = req.user.id;
+    const parsed = sanitizeJobFields(req.body);
+    if (parsed.error) {
+      return res.status(400).json({ message: parsed.error });
+    }
+
+    const videoUrl =
+      typeof req.body?.videoUrl === "string" ? req.body.videoUrl.trim() : "";
+    if (!videoUrl) {
+      return res.status(400).json({ message: "Video URL is required" });
+    }
+
+    const quota = await getQuotaForUser(authorId);
+    if (!quota.canPublishVideoPost) {
+      return res.status(403).json({
+        success: false,
+        code: "VIDEO_POST_CREDIT_REQUIRED",
+        message:
+          "You need a Video Promotion credit. Buy one from My Subscription on the website.",
+        videoPostCredits: quota.videoPostCredits || 0,
+        videoPostPrice: quota.videoPostPrice,
+      });
+    }
+
+    const job = await createVideoJobFromPayload(authorId, parsed.payload, videoUrl);
+
+    res.status(201).json({
+      success: true,
+      message: "Video post published successfully",
+      job,
+    });
+  } catch (error) {
+    console.error("CREATE VIDEO JOB ERROR 👉", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+const createBannerJob = async (req, res) => {
+  try {
+    const authorId = req.user.id;
+    const parsed = sanitizeJobFields(req.body);
+    if (parsed.error) {
+      return res.status(400).json({ message: parsed.error });
+    }
+
+    const bannerUrl =
+      typeof req.body?.bannerUrl === "string" ? req.body.bannerUrl.trim() : "";
+    if (!bannerUrl) {
+      return res.status(400).json({ message: "Banner image URL is required" });
+    }
+
+    const quota = await getQuotaForUser(authorId);
+    if (!quota.canPublishBannerAd) {
+      return res.status(403).json({
+        success: false,
+        code: "BANNER_AD_CREDIT_REQUIRED",
+        message:
+          "You need a Banner Promotion credit. Buy one from My Subscription on the website.",
+        bannerAdCredits: quota.bannerAdCredits || 0,
+        bannerAdPrice: quota.bannerAdPrice,
+      });
+    }
+
+    const job = await createBannerJobFromPayload(authorId, parsed.payload, bannerUrl);
+
+    res.status(201).json({
+      success: true,
+      message: "Banner ad published successfully",
+      job,
+    });
+  } catch (error) {
+    console.error("CREATE BANNER JOB ERROR 👉", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 export {
   getQuota,
   createJob,
+  createVideoJob,
+  createBannerJob,
   createAddonOrder,
   createFeatureOrder,
   getJobs,
+  streamJobVideo,
   getJobById,
   getMyJobs,
   updateJob,
   deleteJob,
   uploadJobImageHandler,
+  uploadJobVideoHandler,
 };
