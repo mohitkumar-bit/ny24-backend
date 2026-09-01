@@ -8,6 +8,7 @@ import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.
 import { isFeaturedActive } from "../utils/featured.js";
 import { isVideoPostActive } from "../utils/videoPost.js";
 import { isBannerAdActive } from "../utils/bannerPost.js";
+import { buildInterleavedFeed } from "../utils/feedInterleave.js";
 import { uploadVideoToS3, isS3Configured, getVideoObjectFromS3 } from "../utils/s3.js";
 import { assertVideoWithinLimit } from "../utils/videoValidation.js";
 import {
@@ -23,6 +24,13 @@ import { createRazorpayOrder } from "../utils/razorpay.js";
 
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function resolveIsFeatured(job, { videoActive, bannerActive }) {
+  if (!isFeaturedActive(job)) return false;
+  if (job.isBannerAd && !bannerActive) return false;
+  if (job.isVideoPost && !videoActive) return false;
+  return true;
+}
 
 const getQuota = async (req, res) => {
   try {
@@ -342,7 +350,7 @@ const getJobs = async (req, res) => {
         videoBoost +
         bannerBoost;
 
-      const isFeatured = isFeaturedActive(job);
+      const isFeatured = resolveIsFeatured(job, { videoActive, bannerActive });
 
       return {
         ...job,
@@ -362,19 +370,10 @@ const getJobs = async (req, res) => {
         ? ranked.filter((j) => j.isVerifiedAuthor)
         : ranked;
 
-    const featured = filteredRanked
-      .filter((j) => j.isFeatured)
-      .sort((a, b) => b.rankingScore - a.rankingScore)
-      .slice(0, 10);
+    const feed = buildInterleavedFeed(filteredRanked);
+    const cleanedFeed = feed.map(({ rankingScore, ...rest }) => rest);
 
-    const organic = filteredRanked
-      .filter((j) => !j.isFeatured)
-      .sort((a, b) => b.rankingScore - a.rankingScore);
-
-    const cleanedFeatured = featured.map(({ rankingScore, ...rest }) => rest);
-    const cleanedOrganic = organic.map(({ rankingScore, ...rest }) => rest);
-
-    res.status(200).json([...cleanedFeatured, ...cleanedOrganic]);
+    res.status(200).json(cleanedFeed);
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
@@ -431,13 +430,15 @@ const getJobById = async (req, res) => {
     }
 
     const jobObj = job.toObject ? job.toObject() : job;
+    const bannerActive = isBannerAdActive(jobObj);
+    const videoActive = isVideoPostActive(jobObj);
     res.status(200).json({
       ...jobObj,
-      isFeatured: isFeaturedActive(jobObj),
-      isVideoPost: isVideoPostActive(jobObj),
-      isVideoActive: isVideoPostActive(jobObj),
-      isBannerAd: isBannerAdActive(jobObj),
-      isBannerActive: isBannerAdActive(jobObj),
+      isFeatured: resolveIsFeatured(jobObj, { videoActive, bannerActive }),
+      isVideoPost: videoActive,
+      isVideoActive: videoActive,
+      isBannerAd: bannerActive,
+      isBannerActive: bannerActive,
     });
   } catch (error) {
     res.status(500).json({ message: "Server error" });
@@ -468,7 +469,7 @@ const getMyJobs = async (req, res) => {
     if (expiredVideoIds.length > 0) {
       await JobPost.updateMany(
         { _id: { $in: expiredVideoIds } },
-        { $set: { isVideoPost: false } }
+        { $set: { isVideoPost: false, isFeatured: false } }
       );
     }
 
@@ -478,20 +479,22 @@ const getMyJobs = async (req, res) => {
     if (expiredBannerIds.length > 0) {
       await JobPost.updateMany(
         { _id: { $in: expiredBannerIds } },
-        { $set: { isBannerAd: false } }
+        { $set: { isBannerAd: false, isFeatured: false } }
       );
     }
 
     res.status(200).json(
       jobs.map((job) => {
         const jobObj = job.toObject ? job.toObject() : job;
+        const videoActive = isVideoPostActive(jobObj);
+        const bannerActive = isBannerAdActive(jobObj);
         return {
           ...jobObj,
-          isFeatured: isFeaturedActive(jobObj),
-          isVideoPost: isVideoPostActive(jobObj),
-          isVideoActive: isVideoPostActive(jobObj),
-          isBannerAd: isBannerAdActive(jobObj),
-          isBannerActive: isBannerAdActive(jobObj),
+          isFeatured: resolveIsFeatured(jobObj, { videoActive, bannerActive }),
+          isVideoPost: videoActive,
+          isVideoActive: videoActive,
+          isBannerAd: bannerActive,
+          isBannerActive: bannerActive,
         };
       })
     );
