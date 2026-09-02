@@ -17,7 +17,7 @@ import {
 } from "../controllers/jobController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import { uploadJobImage } from "../middleware/uploadJobImage.js";
-import { uploadJobVideo } from "../middleware/uploadJobVideo.js";
+import { uploadJobVideo, videoUploadSizeMessage } from "../middleware/uploadJobVideo.js";
 
 const router = express.Router();
 
@@ -40,6 +40,9 @@ router.post(
   (req, res, next) => {
     uploadJobVideo(req, res, (err) => {
       if (err) {
+        if (err.code === "LIMIT_FILE_SIZE") {
+          return res.status(400).json({ message: videoUploadSizeMessage() });
+        }
         return res.status(400).json({ message: err.message || "Invalid upload" });
       }
       next();
