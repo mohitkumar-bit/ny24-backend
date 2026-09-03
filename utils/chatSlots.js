@@ -175,7 +175,7 @@ export async function claimSlot(user, conversationId) {
     return {
       ok: false,
       code: "CHAT_LIMIT_REACHED",
-      message: `All ${limit} chat slots are in use. Wait for a slot to expire, unpin a chat, or upgrade.`,
+      message: `All ${limit} chat slots are in use. Wait for a slot to expire, unpin a chat.`,
       limit,
     };
   }

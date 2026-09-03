@@ -243,7 +243,7 @@ export const checkChatLimit = async (req, res) => {
     if (countActiveSlots(user) >= limit) {
       return res.status(403).json({
         allowed: false,
-        message: `All ${limit} chat slots are in use. Wait for a slot to expire, unpin a chat, or upgrade.`,
+        message: `All ${limit} chat slots are in use. Wait for a slot to expire, unpin a chat.`,
         code: "CHAT_LIMIT_REACHED",
         limit,
       });
