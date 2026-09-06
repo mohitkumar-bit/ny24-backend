@@ -28,6 +28,7 @@ const formatUserLocationResponse = (user) => {
   };
 };
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from "../utils/jwt.js";
+import { sendPhoneOtp } from "../utils/smsOtpApi.js";
 
 const SESSION_REVOKED = {
   message: "Logged in on another device. Please sign in again.",
@@ -35,9 +36,14 @@ const SESSION_REVOKED = {
 };
 
 const DUMMY_OTP = String(process.env.DUMMY_OTP || "123456");
+const ALLOW_DUMMY_OTP = String(process.env.ALLOW_DUMMY_OTP || "").toLowerCase() === "true";
 const OTP_TTL_MS = 5 * 60 * 1000;
 /** phone -> { otp, expiresAt, purpose, name?, email? } */
 const otpStore = new Map();
+
+function generateOtpCode() {
+  return String(crypto.randomInt(100000, 1000000));
+}
 
 function normalizePhone(raw) {
   const digits = String(raw || "").replace(/\D/g, "");
@@ -170,7 +176,7 @@ const login = async (req, res) => {
 };
 
 /**
- * Dummy OTP — always accepts DUMMY_OTP (default 123456). No SMS sent.
+ * Send phone OTP via apitxt.com (same authkey as Aadhaar).
  * purpose: "login" | "register"
  */
 const sendOtp = async (req, res) => {
@@ -222,21 +228,40 @@ const sendOtp = async (req, res) => {
       return res.status(403).json({ message: "Account is blocked" });
     }
 
+    const otp = generateOtpCode();
+
+    try {
+      await sendPhoneOtp({ phone, otp });
+    } catch (smsError) {
+      console.error("SEND OTP SMS ERROR 👉", smsError?.message || smsError, smsError?.apiResult);
+      if (smsError?.message === "AADHAAR_API_NOT_CONFIGURED") {
+        return res.status(503).json({
+          message: "OTP SMS is not configured. Add AADHAAR_API_AUTHKEY to the server.",
+        });
+      }
+      return res.status(502).json({
+        message: smsError?.message || "Failed to send OTP. Please try again.",
+      });
+    }
+
     otpStore.set(phone, {
-      otp: DUMMY_OTP,
+      otp,
       expiresAt: Date.now() + OTP_TTL_MS,
       purpose,
       name: purpose === "register" ? name : existing?.name || "",
       email: purpose === "register" ? email : "",
     });
 
-    return res.status(200).json({
+    const response = {
       message: "OTP sent successfully",
       phone,
       expiresIn: Math.floor(OTP_TTL_MS / 1000),
-      // Dummy mode — clients can show this for testing
-      dummyOtp: DUMMY_OTP,
-    });
+    };
+    if (ALLOW_DUMMY_OTP) {
+      response.dummyOtp = otp;
+    }
+
+    return res.status(200).json(response);
   } catch (error) {
     console.error("SEND OTP ERROR 👉", error);
     return res.status(500).json({ message: "Failed to send OTP" });
@@ -261,7 +286,9 @@ const verifyOtp = async (req, res) => {
       return res.status(400).json({ message: "OTP expired. Please request a new one." });
     }
 
-    if (otp !== pending.otp && otp !== DUMMY_OTP) {
+    const otpMatches =
+      otp === pending.otp || (ALLOW_DUMMY_OTP && otp === DUMMY_OTP);
+    if (!otpMatches) {
       return res.status(401).json({ message: "Invalid OTP" });
     }
 
