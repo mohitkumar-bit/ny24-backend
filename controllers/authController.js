@@ -37,6 +37,8 @@ const SESSION_REVOKED = {
 
 const DUMMY_OTP = String(process.env.DUMMY_OTP || "123456");
 const ALLOW_DUMMY_OTP = String(process.env.ALLOW_DUMMY_OTP || "").toLowerCase() === "true";
+/** Login-only OTP bypass for this test number (no SMS). */
+const OTP_BYPASS_LOGIN_PHONE = "1234567890";
 const OTP_TTL_MS = 5 * 60 * 1000;
 /** phone -> { otp, expiresAt, purpose, name?, email? } */
 const otpStore = new Map();
@@ -226,6 +228,31 @@ const sendOtp = async (req, res) => {
 
     if (existing?.isBlocked) {
       return res.status(403).json({ message: "Account is blocked" });
+    }
+
+    // Dev/test login bypass: skip SMS and issue session immediately.
+    if (purpose === "login" && phone === OTP_BYPASS_LOGIN_PHONE) {
+      const bypassUser = await User.findOne({ phone }).populate("subscription");
+      if (!bypassUser) {
+        return res.status(404).json({
+          message: "No account found for this number. Please sign up.",
+          code: "USER_NOT_FOUND",
+        });
+      }
+      if (bypassUser.isBlocked) {
+        return res.status(403).json({ message: "Account is blocked" });
+      }
+      const { accessToken, refreshToken } = await issueSessionTokens(bypassUser, {
+        lastLoginAt: new Date(),
+      });
+      return res.status(200).json({
+        message: "Login successful",
+        phone,
+        bypassOtp: true,
+        user: buildAuthUserPayload(bypassUser),
+        accessToken,
+        refreshToken,
+      });
     }
 
     const otp = generateOtpCode();
