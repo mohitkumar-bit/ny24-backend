@@ -15,6 +15,7 @@ import {
   createFeatureOrder,
   streamJobVideo,
 } from "../controllers/jobController.js";
+import { reportPost } from "../controllers/reportController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import { uploadJobImage } from "../middleware/uploadJobImage.js";
 import { uploadJobVideo, videoUploadSizeMessage } from "../middleware/uploadJobVideo.js";
@@ -59,6 +60,7 @@ router.post("/:id/feature-order", authMiddleware, createFeatureOrder);
 router.get("/", authMiddleware, getJobs);
 router.get("/me", authMiddleware, getMyJobs);
 router.get("/:id/video-stream", streamJobVideo);
+router.post("/:id/report", authMiddleware, reportPost);
 router.get("/:id", getJobById);
 router.put("/:id", authMiddleware, updateJob);
 router.delete("/:id", authMiddleware, deleteJob);

@@ -57,6 +57,10 @@ import {
   blockUserFromReport,
 } from "../controllers/adminChatReportController.js";
 import {
+  listContentReports,
+  dismissContentReport,
+} from "../controllers/reportController.js";
+import {
   listConversations,
   getConversationMessages,
   getChatHistory,
@@ -116,6 +120,9 @@ router.get("/notifications/sent", listSentNotifications);
 router.get("/chat-reports", listChatReports);
 router.post("/chat-reports/:id/dismiss", dismissChatReport);
 router.post("/chat-reports/:id/block-user", blockUserFromReport);
+
+router.get("/content-reports", listContentReports);
+router.post("/content-reports/:id/dismiss", dismissContentReport);
 
 router.get("/chat/conversations", listConversations);
 router.get("/chat/conversations/:id/messages", getConversationMessages);
