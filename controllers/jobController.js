@@ -544,7 +544,7 @@ const updateJob = async (req, res) => {
             }
           : {}),
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     res.status(200).json({

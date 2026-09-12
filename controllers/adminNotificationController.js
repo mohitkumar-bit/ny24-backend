@@ -50,7 +50,7 @@ const createTemplate = async (req, res) => {
 const updateTemplate = async (req, res) => {
   try {
     const template = await NotificationTemplate.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     });
     if (!template) return res.status(404).json({ message: "Template not found" });

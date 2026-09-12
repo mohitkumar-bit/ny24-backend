@@ -87,7 +87,7 @@ const createWorker = async (req, res) => {
 const updateWorker = async (req, res) => {
   try {
     const worker = await WorkerProfile.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     })
       .populate("user", "name email phone isVerified")

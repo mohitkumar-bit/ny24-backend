@@ -208,7 +208,7 @@ const declineCallRequest = async (req, res) => {
         status: "pending",
       },
       { status: "declined", respondedAt: new Date() },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!callRequest) {

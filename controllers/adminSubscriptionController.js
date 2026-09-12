@@ -74,7 +74,7 @@ const createSubscription = async (req, res) => {
 const updateSubscription = async (req, res) => {
   try {
     const subscription = await Subscription.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     }).populate("user", "name email");
 

@@ -151,7 +151,7 @@ export const dismissContentReport = async (req, res) => {
         reviewedBy: req.admin?.id,
         reviewedAt: new Date(),
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!report) {

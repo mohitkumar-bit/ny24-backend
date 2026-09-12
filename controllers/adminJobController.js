@@ -93,7 +93,7 @@ const createJob = async (req, res) => {
 const updateJob = async (req, res) => {
   try {
     const job = await JobPost.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     })
       .populate("author", "name email")

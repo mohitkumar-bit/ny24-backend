@@ -60,7 +60,7 @@ export const dismissChatReport = async (req, res) => {
           reviewedAt: new Date(),
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!report) {

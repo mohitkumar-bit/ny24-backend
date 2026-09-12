@@ -314,7 +314,7 @@ const updateWorkerProfile = async (req, res) => {
           interestedInLongDistance
         }
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate("skills", "name icon");
 
     if (!profile) {

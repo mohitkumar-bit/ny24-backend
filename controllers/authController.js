@@ -558,7 +558,7 @@ const updateProfile = async (req, res) => {
     const user = await User.findByIdAndUpdate(
       userId,
       { $set: updateData },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate("subscription");
 
     if (!user) {
@@ -614,7 +614,7 @@ const uploadProfilePictureHandler = async (req, res) => {
     const user = await User.findByIdAndUpdate(
       req.user.id,
       { $set: { profilePicture } },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate("subscription");
 
     if (!user) {
@@ -654,7 +654,7 @@ const removeProfilePictureHandler = async (req, res) => {
     const user = await User.findByIdAndUpdate(
       req.user.id,
       { $set: { profilePicture: null } },
-      { new: true }
+      { returnDocument: 'after' }
     ).populate("subscription");
 
     if (!user) {
