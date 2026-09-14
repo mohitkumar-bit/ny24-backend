@@ -2,7 +2,13 @@ import mongoose from "mongoose";
 import WorkerProfile from "../models/WorkerProfile.js";
 import User from "../models/authModal.js";
 import Category from "../models/Category.js";
-import { distanceKm, hasValidCoordinates, resolveWorkerCoordinates } from "../utils/distance.js";
+import {
+  distanceKm,
+  hasValidCoordinates,
+  resolveWorkerCoordinates,
+  collectLocalityTokens,
+  filterByLocality,
+} from "../utils/distance.js";
 
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -98,16 +104,20 @@ const createWorkerProfile = async (req, res) => {
 const getWorkers = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { 
-      category, 
+    const {
+      category,
       city,
       search,
-      minPrice, 
-      maxPrice, 
-      gender, 
+      minPrice,
+      maxPrice,
+      gender,
       interestedInLongDistance,
       minAge,
-      maxAge 
+      maxAge,
+      nearby,
+      locality,
+      userCity,
+      userState,
     } = req.query;
     
     let query = {
@@ -181,8 +191,19 @@ const getWorkers = async (req, res) => {
     const userCoords = currentUser?.location?.coordinates;
     const hasUserCoords = hasValidCoordinates(userCoords);
 
-    const userLng = hasUserCoords ? userCoords[0] : null;
-    const userLat = hasUserCoords ? userCoords[1] : null;
+    const queryLat = req.query.lat != null ? Number(req.query.lat) : null;
+    const queryLng = req.query.lng != null ? Number(req.query.lng) : null;
+    const browseLat = Number.isFinite(queryLat)
+      ? queryLat
+      : hasUserCoords
+        ? userCoords[1]
+        : null;
+    const browseLng = Number.isFinite(queryLng)
+      ? queryLng
+      : hasUserCoords
+        ? userCoords[0]
+        : null;
+    const hasBrowseCoords = Number.isFinite(browseLat) && Number.isFinite(browseLng);
 
     const skillMatchScore = category ? 1 : 0.6;
 
@@ -190,9 +211,10 @@ const getWorkers = async (req, res) => {
       const w = wDoc.toObject ? wDoc.toObject() : wDoc;
 
       const coords = resolveWorkerCoordinates(w);
-      const km = hasUserCoords && hasValidCoordinates(coords)
-        ? distanceKm(userLat, userLng, coords[1], coords[0])
-        : null;
+      const km =
+        hasBrowseCoords && hasValidCoordinates(coords)
+          ? distanceKm(browseLat, browseLng, coords[1], coords[0])
+          : null;
 
       const distanceScore =
         km == null ? 0.05 : Math.max(0, 1 - km / 30); // 0..1 (30km cap)
@@ -235,12 +257,35 @@ const getWorkers = async (req, res) => {
       };
     });
 
-    const featured = ranked
+    let nearbyRanked = ranked;
+    const shouldApplyNearby =
+      nearby === "true" || (!search && !city && (hasBrowseCoords || locality || userCity || userState));
+
+    if (shouldApplyNearby) {
+      const profileLoc = currentUser?.location || {};
+      const localityTokens = collectLocalityTokens(
+        locality,
+        userCity,
+        userState,
+        profileLoc.city,
+        profileLoc.district,
+        profileLoc.state,
+        profileLoc.address
+      );
+
+      nearbyRanked = filterByLocality(ranked, {
+        userLat: browseLat,
+        userLng: browseLng,
+        localityTokens,
+      });
+    }
+
+    const featured = nearbyRanked
       .filter((w) => w.isFeatured)
       .sort((a, b) => b.rankingScore - a.rankingScore)
       .slice(0, 8);
 
-    const organic = ranked
+    const organic = nearbyRanked
       .filter((w) => !w.isFeatured)
       .sort((a, b) => b.rankingScore - a.rankingScore);
 

@@ -3,7 +3,12 @@ import User from "../models/authModal.js";
 import Category from "../models/Category.js";
 import Transaction from "../models/Transaction.js";
 import { randomUUID } from "crypto";
-import { distanceKm, hasValidCoordinates } from "../utils/distance.js";
+import {
+  distanceKm,
+  hasValidCoordinates,
+  collectLocalityTokens,
+  filterByLocality,
+} from "../utils/distance.js";
 import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.js";
 import { isFeaturedActive } from "../utils/featured.js";
 import { isVideoPostActive } from "../utils/videoPost.js";
@@ -268,14 +273,27 @@ const createFeatureOrder = async (req, res) => {
 
 const getJobs = async (req, res) => {
   try {
-    const { category, city, search, verifiedOnly } = req.query;
+    const { category, city, search, verifiedOnly, nearby, locality, userCity, userState } =
+      req.query;
     const userId = req.user.id;
 
     const currentUser = await User.findById(userId).select("location");
     const userCoords = currentUser?.location?.coordinates;
     const hasUserCoords = hasValidCoordinates(userCoords);
-    const userLng = hasUserCoords ? userCoords[0] : null;
-    const userLat = hasUserCoords ? userCoords[1] : null;
+
+    const queryLat = req.query.lat != null ? Number(req.query.lat) : null;
+    const queryLng = req.query.lng != null ? Number(req.query.lng) : null;
+    const browseLat = Number.isFinite(queryLat)
+      ? queryLat
+      : hasUserCoords
+        ? userCoords[1]
+        : null;
+    const browseLng = Number.isFinite(queryLng)
+      ? queryLng
+      : hasUserCoords
+        ? userCoords[0]
+        : null;
+    const hasBrowseCoords = Number.isFinite(browseLat) && Number.isFinite(browseLng);
 
     let query = {};
     
@@ -316,8 +334,8 @@ const getJobs = async (req, res) => {
       const isVerifiedAuthor = !!job.author?.isVerified;
 
       const km =
-        hasUserCoords && hasValidCoordinates(authorCoords)
-          ? distanceKm(userLat, userLng, authorCoords[1], authorCoords[0])
+        hasBrowseCoords && hasValidCoordinates(authorCoords)
+          ? distanceKm(browseLat, browseLng, authorCoords[1], authorCoords[0])
           : null;
 
       const distanceScore = km == null ? 0.05 : Math.max(0, 1 - km / 40); // 0..1 (40km cap)
@@ -365,10 +383,32 @@ const getJobs = async (req, res) => {
       };
     });
 
-    const filteredRanked =
+    let filteredRanked =
       verifiedOnly === "true"
         ? ranked.filter((j) => j.isVerifiedAuthor)
         : ranked;
+
+    const shouldApplyNearby =
+      nearby === "true" || (!search && !city && (hasBrowseCoords || locality || userCity || userState));
+
+    if (shouldApplyNearby) {
+      const profileLoc = currentUser?.location || {};
+      const localityTokens = collectLocalityTokens(
+        locality,
+        userCity,
+        userState,
+        profileLoc.city,
+        profileLoc.district,
+        profileLoc.state,
+        profileLoc.address
+      );
+
+      filteredRanked = filterByLocality(filteredRanked, {
+        userLat: browseLat,
+        userLng: browseLng,
+        localityTokens,
+      });
+    }
 
     const feed = buildInterleavedFeed(filteredRanked);
     const cleanedFeed = feed.map(({ rankingScore, ...rest }) => rest);

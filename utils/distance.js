@@ -30,6 +30,74 @@ export function resolveWorkerCoordinates(worker) {
   return null;
 }
 
+function normalizeLocalityToken(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+/** Collect unique locality tokens for text-based matching. */
+export function collectLocalityTokens(...sources) {
+  const tokens = new Set();
+  for (const source of sources) {
+    if (!source) continue;
+    if (Array.isArray(source)) {
+      for (const item of source) {
+        const t = normalizeLocalityToken(item);
+        if (t.length >= 3) tokens.add(t);
+      }
+      continue;
+    }
+    const raw = String(source);
+    for (const part of raw.split(/[|,]/)) {
+      const t = normalizeLocalityToken(part);
+      if (t.length >= 3) tokens.add(t);
+    }
+  }
+  return Array.from(tokens);
+}
+
+export function resolveAuthorCoordinates(author) {
+  const coords = author?.location?.coordinates;
+  return hasValidCoordinates(coords) ? coords : null;
+}
+
+export function resolveJobDistanceKm(job, userLat, userLng) {
+  if (!Number.isFinite(userLat) || !Number.isFinite(userLng)) return null;
+  const coords = resolveAuthorCoordinates(job.author);
+  if (!coords) return null;
+  return Math.round(distanceKm(userLat, userLng, coords[1], coords[0]) * 10) / 10;
+}
+
+export function jobMatchesLocality(job, { maxKm, userLat, userLng, localityTokens = [] }) {
+  const km =
+    job.distanceKm != null ? job.distanceKm : resolveJobDistanceKm(job, userLat, userLng);
+
+  if (km != null) return km <= maxKm;
+
+  const loc = job.location || {};
+  const haystack = [loc.city, loc.state, loc.address, loc.district]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (!haystack || localityTokens.length === 0) return false;
+
+  return localityTokens.some((token) => {
+    if (haystack.includes(token)) return true;
+    return haystack.split(/[\s,]+/).some((word) => word.includes(token) || token.includes(word));
+  });
+}
+
+/** Prefer nearby results; widen radius once if the first pass is empty. */
+export function filterByLocality(items, opts, radii = [80, 150]) {
+  for (const maxKm of radii) {
+    const filtered = items.filter((item) => jobMatchesLocality(item, { ...opts, maxKm }));
+    if (filtered.length > 0) return filtered;
+  }
+  return [];
+}
+
 export function sortWorkersByDistance(workers, userCoordinates) {
   if (!hasValidCoordinates(userCoordinates)) {
     return workers.map((w) => ({
