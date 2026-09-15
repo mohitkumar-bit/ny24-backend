@@ -323,42 +323,52 @@ const getMyWorkerProfile = async (req, res) => {
 const updateWorkerProfile = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { 
-      title, 
-      description, 
-      skills, 
-      experience, 
-      hourlyRate, 
+    const {
+      title,
+      description,
+      skills,
+      experience,
+      hourlyRate,
       location,
       availability,
       age,
       gender,
-      interestedInLongDistance
+      interestedInLongDistance,
     } = req.body;
 
-    const skillIds = normalizeSkillIds(skills);
-    if (skillIds.length === 0) {
-      return res.status(400).json({ message: "At least one skill is required" });
+    const updates = {};
+
+    if (title !== undefined) updates.title = title;
+    if (description !== undefined) updates.description = description;
+    if (experience !== undefined) updates.experience = experience;
+    if (hourlyRate !== undefined) updates.hourlyRate = hourlyRate;
+    if (location !== undefined) updates.location = location;
+    if (availability !== undefined) updates.availability = availability;
+    if (gender !== undefined) updates.gender = gender;
+    if (interestedInLongDistance !== undefined) {
+      updates.interestedInLongDistance = interestedInLongDistance;
     }
 
-    if (!assertAgeAtLeast18(age, res)) return;
+    if (skills !== undefined) {
+      const skillIds = normalizeSkillIds(skills);
+      if (skillIds.length === 0) {
+        return res.status(400).json({ message: "At least one skill is required" });
+      }
+      updates.skills = skillIds;
+    }
+
+    if (age !== undefined) {
+      if (!assertAgeAtLeast18(age, res)) return;
+      updates.age = normalizeAge(age);
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ message: "No fields to update" });
+    }
 
     const profile = await WorkerProfile.findOneAndUpdate(
       { user: userId },
-      { 
-        $set: {
-          title,
-          description,
-          skills: skillIds,
-          experience,
-          hourlyRate,
-          location,
-          availability,
-          age: normalizeAge(age),
-          gender,
-          interestedInLongDistance
-        }
-      },
+      { $set: updates },
       { returnDocument: 'after' }
     ).populate("skills", "name icon");
 

@@ -58,6 +58,12 @@ function isValidPhone(phone) {
   return /^[0-9]{10}$/.test(phone);
 }
 
+/** Legacy users without the field are treated as verified. Only explicit false is unverified. */
+function isPhoneVerified(user) {
+  if (!user) return false;
+  return user.verified !== false;
+}
+
 function buildAuthUserPayload(user) {
   return {
     id: user._id,
@@ -69,6 +75,7 @@ function buildAuthUserPayload(user) {
     createdAt: user.createdAt,
     phone: user.phone,
     profilePicture: user.profilePicture || null,
+    verified: isPhoneVerified(user),
   };
 }
 
@@ -107,6 +114,7 @@ const register = async (req, res) => {
       email,
       password: hashedPassword,
       phone,
+      verified: false,
     });
 
     const { accessToken, refreshToken } = await issueSessionTokens(user);
@@ -201,28 +209,53 @@ const sendOtp = async (req, res) => {
 
     const existing = await User.findOne({ phone });
 
-    if (purpose === "login" && !existing) {
-      return res.status(404).json({
-        message: "No account found for this number. Please sign up.",
-        code: "USER_NOT_FOUND",
-      });
+    if (purpose === "login") {
+      if (!existing) {
+        return res.status(404).json({
+          message: "No account found for this number. Please sign up.",
+          code: "USER_NOT_FOUND",
+        });
+      }
+      if (!isPhoneVerified(existing)) {
+        return res.status(403).json({
+          message: "Registration is not complete. Please sign up and verify your phone number first.",
+          code: "NOT_VERIFIED",
+        });
+      }
     }
 
     if (purpose === "register") {
       if (!name) {
         return res.status(400).json({ message: "Name is required to sign up" });
       }
-      if (existing) {
+      if (existing && isPhoneVerified(existing)) {
         return res.status(400).json({
           message: "An account already exists with this number. Please sign in.",
           code: "USER_EXISTS",
         });
       }
       if (email) {
-        const emailTaken = await User.findOne({ email });
+        const emailTaken = await User.findOne({
+          email,
+          ...(existing?._id ? { _id: { $ne: existing._id } } : {}),
+        });
         if (emailTaken) {
           return res.status(400).json({ message: "Email is already registered" });
         }
+      }
+
+      if (existing && !isPhoneVerified(existing)) {
+        existing.name = name;
+        if (email) existing.email = email;
+        await existing.save();
+      } else if (!existing) {
+        await User.create({
+          name,
+          phone,
+          ...(email ? { email } : {}),
+          verified: false,
+          location: { type: "Point", coordinates: [0, 0] },
+        });
       }
     }
 
@@ -241,6 +274,12 @@ const sendOtp = async (req, res) => {
       }
       if (bypassUser.isBlocked) {
         return res.status(403).json({ message: "Account is blocked" });
+      }
+      if (!isPhoneVerified(bypassUser)) {
+        return res.status(403).json({
+          message: "Registration is not complete. Please sign up and verify your phone number first.",
+          code: "NOT_VERIFIED",
+        });
       }
       const { accessToken, refreshToken } = await issueSessionTokens(bypassUser, {
         lastLoginAt: new Date(),
@@ -324,12 +363,6 @@ const verifyOtp = async (req, res) => {
     let user = await User.findOne({ phone }).populate("subscription");
 
     if (pending.purpose === "register") {
-      if (user) {
-        return res.status(400).json({
-          message: "An account already exists with this number. Please sign in.",
-        });
-      }
-
       const name = pending.name || String(req.body?.name || "").trim();
       if (!name) {
         return res.status(400).json({ message: "Name is required to sign up" });
@@ -340,17 +373,40 @@ const verifyOtp = async (req, res) => {
         (typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "");
       const email = emailRaw || undefined;
 
-      user = await User.create({
-        name,
-        phone,
-        ...(email ? { email } : {}),
-        location: { type: "Point", coordinates: [0, 0] },
-      });
-      user = await User.findById(user._id).populate("subscription");
+      if (user && isPhoneVerified(user)) {
+        return res.status(400).json({
+          message: "An account already exists with this number. Please sign in.",
+          code: "USER_EXISTS",
+        });
+      }
+
+      if (user && !isPhoneVerified(user)) {
+        user.name = name;
+        if (email) user.email = email;
+        user.verified = true;
+        await user.save();
+        user = await User.findById(user._id).populate("subscription");
+      } else {
+        user = await User.create({
+          name,
+          phone,
+          ...(email ? { email } : {}),
+          verified: true,
+          location: { type: "Point", coordinates: [0, 0] },
+        });
+        user = await User.findById(user._id).populate("subscription");
+      }
     } else {
       if (!user) {
         return res.status(404).json({
           message: "No account found for this number. Please sign up.",
+          code: "USER_NOT_FOUND",
+        });
+      }
+      if (!isPhoneVerified(user)) {
+        return res.status(403).json({
+          message: "Registration is not complete. Please sign up and verify your phone number first.",
+          code: "NOT_VERIFIED",
         });
       }
       if (user.isBlocked) {
@@ -452,6 +508,7 @@ const getProfile = async (req, res) => {
         locationDetails,
         isWorker: user.isWorker,
         isVerified: user.isVerified,
+        verified: isPhoneVerified(user),
         profilePicture: user.profilePicture || null,
         verificationStatus: verification.status,
         canVerify: verification.canSubmit && hasActiveBusinessPlan(user),

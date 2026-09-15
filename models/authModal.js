@@ -142,6 +142,12 @@ const userSchema = new mongoose.Schema(
       default: false,
     },
 
+    /** True after phone OTP is verified during registration; false until signup OTP completes. */
+    verified: {
+      type: Boolean,
+      default: false,
+    },
+
     verification: {
       status: {
         type: String,
