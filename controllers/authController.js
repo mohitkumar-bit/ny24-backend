@@ -225,8 +225,8 @@ const sendOtp = async (req, res) => {
     }
 
     if (purpose === "register") {
-      if (!name) {
-        return res.status(400).json({ message: "Name is required to sign up" });
+      if (!name || !email) {
+        return res.status(400).json({ message: "All fields are required" });
       }
       if (existing && isPhoneVerified(existing)) {
         return res.status(400).json({
@@ -246,13 +246,13 @@ const sendOtp = async (req, res) => {
 
       if (existing && !isPhoneVerified(existing)) {
         existing.name = name;
-        if (email) existing.email = email;
+        existing.email = email;
         await existing.save();
       } else if (!existing) {
         await User.create({
           name,
           phone,
-          ...(email ? { email } : {}),
+          email,
           verified: false,
           location: { type: "Point", coordinates: [0, 0] },
         });
@@ -373,6 +373,10 @@ const verifyOtp = async (req, res) => {
         (typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "");
       const email = emailRaw || undefined;
 
+      if (!email) {
+        return res.status(400).json({ message: "All fields are required" });
+      }
+
       if (user && isPhoneVerified(user)) {
         return res.status(400).json({
           message: "An account already exists with this number. Please sign in.",
@@ -382,7 +386,7 @@ const verifyOtp = async (req, res) => {
 
       if (user && !isPhoneVerified(user)) {
         user.name = name;
-        if (email) user.email = email;
+        user.email = email;
         user.verified = true;
         await user.save();
         user = await User.findById(user._id).populate("subscription");
@@ -390,7 +394,7 @@ const verifyOtp = async (req, res) => {
         user = await User.create({
           name,
           phone,
-          ...(email ? { email } : {}),
+          email,
           verified: true,
           location: { type: "Point", coordinates: [0, 0] },
         });
