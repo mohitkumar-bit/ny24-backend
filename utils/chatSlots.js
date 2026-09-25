@@ -37,6 +37,25 @@ export function isSlotActive(slot, pinnedIds) {
   return new Date(slot.expiresAt) > new Date();
 }
 
+/** Atomic pull of slots/pins — avoids VersionError on concurrent chat list loads */
+async function pullSlotsFromUser(userId, conversationIds) {
+  if (!conversationIds?.length) return;
+  await User.updateOne(
+    { _id: userId },
+    {
+      $pull: {
+        chatSlots: { conversationId: { $in: conversationIds } },
+        pinnedConversations: { $in: conversationIds },
+      },
+    }
+  );
+}
+
+async function reloadUser(user) {
+  const fresh = await User.findById(user._id).populate("subscription");
+  return fresh || user;
+}
+
 /** Remove slots pointing to conversations that were deleted manually */
 export async function cleanupOrphanedSlots(user) {
   if (!user?.chatSlots?.length) return user;
@@ -49,19 +68,12 @@ export async function cleanupOrphanedSlots(user) {
 
   const orphanedIds = user.chatSlots
     .filter((s) => !existingSet.has(s.conversationId.toString()))
-    .map((s) => s.conversationId.toString());
+    .map((s) => s.conversationId);
 
   if (orphanedIds.length === 0) return user;
 
-  const orphanedSet = new Set(orphanedIds);
-  user.chatSlots = user.chatSlots.filter(
-    (s) => !orphanedSet.has(s.conversationId.toString())
-  );
-  user.pinnedConversations = (user.pinnedConversations || []).filter(
-    (id) => !orphanedSet.has(id.toString())
-  );
-  await user.save();
-  return user;
+  await pullSlotsFromUser(user._id, orphanedIds);
+  return reloadUser(user);
 }
 
 /** Remove expired non-pinned slots and delete their conversations + messages */
@@ -84,16 +96,8 @@ export async function cleanupExpiredSlots(user) {
 
   await Message.deleteMany({ conversationId: { $in: expiredConvIds } });
   await Conversation.deleteMany({ _id: { $in: expiredConvIds } });
-
-  const expiredSet = new Set(expiredConvIds.map((id) => id.toString()));
-  user.chatSlots = (user.chatSlots || []).filter(
-    (s) => !expiredSet.has(s.conversationId.toString())
-  );
-  user.pinnedConversations = (user.pinnedConversations || []).filter(
-    (id) => !expiredSet.has(id.toString())
-  );
-  await user.save();
-  return user;
+  await pullSlotsFromUser(user._id, expiredConvIds);
+  return reloadUser(user);
 }
 
 export async function resolveOrCreateConversation(senderId, receiverId, conversationId) {
@@ -138,7 +142,7 @@ export async function claimSlot(user, conversationId) {
     return { ok: true, slot: null, isSubscribed: true };
   }
 
-  await cleanupExpiredSlots(user);
+  user = await cleanupExpiredSlots(user);
   const convId = conversationId.toString();
   const pinnedIds = new Set(
     (user.pinnedConversations || []).map((id) => id.toString())
@@ -160,7 +164,28 @@ export async function claimSlot(user, conversationId) {
     const now = new Date();
     existing.openedAt = now;
     existing.expiresAt = new Date(now.getTime() + SLOT_DURATION_MS);
-    await user.save();
+    try {
+      await user.save();
+    } catch (err) {
+      if (err?.name === "VersionError") {
+        user = await reloadUser(user);
+        const slot = findSlot(user, convId);
+        if (slot) {
+          slot.openedAt = now;
+          slot.expiresAt = new Date(now.getTime() + SLOT_DURATION_MS);
+          await user.save();
+          return {
+            ok: true,
+            slot,
+            openedAt: slot.openedAt,
+            expiresAt: slot.expiresAt,
+            isPinned: false,
+            alreadyHad: false,
+          };
+        }
+      }
+      throw err;
+    }
     return {
       ok: true,
       slot: existing,
@@ -186,9 +211,10 @@ export async function claimSlot(user, conversationId) {
     openedAt: now,
     expiresAt: new Date(now.getTime() + SLOT_DURATION_MS),
   };
-  if (!user.chatSlots) user.chatSlots = [];
-  user.chatSlots.push(slot);
-  await user.save();
+  await User.updateOne(
+    { _id: user._id },
+    { $push: { chatSlots: slot } }
+  );
 
   return {
     ok: true,
@@ -205,7 +231,7 @@ export async function claimSlotOnPin(user, conversationId) {
   const limit = getSlotLimit(user);
   if (limit === Infinity) return { ok: true };
 
-  await cleanupExpiredSlots(user);
+  user = await cleanupExpiredSlots(user);
   const convId = conversationId.toString();
   let slot = findSlot(user, convId);
 
@@ -224,12 +250,17 @@ export async function claimSlotOnPin(user, conversationId) {
       openedAt: now,
       expiresAt: null,
     };
-    if (!user.chatSlots) user.chatSlots = [];
-    user.chatSlots.push(slot);
+    await User.updateOne(
+      { _id: user._id },
+      { $push: { chatSlots: slot } }
+    );
   } else {
+    await User.updateOne(
+      { _id: user._id, "chatSlots.conversationId": conversationId },
+      { $set: { "chatSlots.$.expiresAt": null } }
+    );
     slot.expiresAt = null;
   }
-  await user.save();
   return { ok: true, slot };
 }
 
@@ -242,8 +273,14 @@ export async function releaseSlotOnUnpin(user, conversationId) {
   const expiryFromOpen = new Date(
     new Date(slot.openedAt).getTime() + SLOT_DURATION_MS
   );
-  slot.expiresAt = expiryFromOpen > now ? expiryFromOpen : now;
-  await user.save();
+  const expiresAt = expiryFromOpen > now ? expiryFromOpen : now;
+
+  await User.updateOne(
+    { _id: user._id, "chatSlots.conversationId": conversationId },
+    { $set: { "chatSlots.$.expiresAt": expiresAt } }
+  );
+
+  user = await reloadUser(user);
   await cleanupExpiredSlots(user);
 }
 

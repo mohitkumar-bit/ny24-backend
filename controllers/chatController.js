@@ -217,8 +217,7 @@ export const checkChatLimit = async (req, res) => {
       return res.json({ allowed: true, isSubscribed: true });
     }
 
-    await cleanupExpiredSlots(user);
-    user = await User.findById(userId).populate("subscription");
+    user = await cleanupExpiredSlots(user);
 
     const existingConv = await Conversation.findOne({
       participants: { $all: [userId, receiverId] },
@@ -263,10 +262,8 @@ export const getConversations = async (req, res) => {
     const subscribed = isSubscribed(user);
 
     if (!subscribed) {
-      await cleanupOrphanedSlots(user);
-      user = await User.findById(userId).populate("subscription");
-      await cleanupExpiredSlots(user);
-      user = await User.findById(userId).populate("subscription");
+      user = await cleanupOrphanedSlots(user);
+      user = await cleanupExpiredSlots(user);
     }
 
     const conversations = await Conversation.find({ participants: userId })
