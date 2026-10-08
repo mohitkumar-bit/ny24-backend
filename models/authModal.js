@@ -22,6 +22,12 @@ const userSchema = new mongoose.Schema(
       default: false,
     },
 
+    // Set to "en" when an account is created; older accounts stay unset until the app syncs its choice
+    language: {
+      type: String,
+      enum: ["en", "hi"],
+    },
+
     phone: {
       type: String,
       unique: true,

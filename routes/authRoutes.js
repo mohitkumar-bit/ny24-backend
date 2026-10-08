@@ -11,6 +11,7 @@ import {
   uploadProfilePictureHandler,
   removeProfilePictureHandler,
   changePassword,
+  updateLanguage,
 } from "../controllers/authController.js";
 import authMiddleware from "../middleware/authMiddleware.js";
 import { uploadJobImage } from "../middleware/uploadJobImage.js";
@@ -19,6 +20,7 @@ const router = express.Router();
 
 router.get("/me", authMiddleware, getProfile);
 router.patch("/me", authMiddleware, updateProfile);
+router.patch("/me/language", authMiddleware, updateLanguage);
 router.post(
   "/upload-profile-picture",
   authMiddleware,

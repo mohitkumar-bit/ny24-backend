@@ -5,6 +5,7 @@ import User from "../models/authModal.js";
 import { formatVerificationForClient, hasActiveBusinessPlan } from "../utils/verificationHelpers.js";
 import { getQuotaForUser } from "../utils/postQuota.js";
 import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.js";
+import { moderateImage, rejectUnsafeContent } from "../utils/contentModeration.js";
 
 const formatUserLocationResponse = (user) => {
   const loc = user.location;
@@ -71,6 +72,7 @@ function buildAuthUserPayload(user) {
     email: user.email || null,
     role: user.role,
     isWorker: user.isWorker,
+    language: user.language || null,
     subscription: user.subscription,
     createdAt: user.createdAt,
     phone: user.phone,
@@ -111,6 +113,7 @@ const register = async (req, res) => {
 
     const user = await User.create({
       name,
+      language: "en",
       email,
       password: hashedPassword,
       phone,
@@ -127,6 +130,7 @@ const register = async (req, res) => {
         email: user.email,
         phone: user.phone,
         isWorker: user.isWorker,
+        language: user.language || null,
         createdAt: user.createdAt,
       },
       accessToken,
@@ -251,6 +255,7 @@ const sendOtp = async (req, res) => {
       } else if (!existing) {
         await User.create({
           name,
+          language: "en",
           phone,
           email,
           verified: false,
@@ -393,6 +398,7 @@ const verifyOtp = async (req, res) => {
       } else {
         user = await User.create({
           name,
+          language: "en",
           phone,
           email,
           verified: true,
@@ -511,6 +517,7 @@ const getProfile = async (req, res) => {
         location,
         locationDetails,
         isWorker: user.isWorker,
+        language: user.language || null,
         isVerified: user.isVerified,
         verified: isPhoneVerified(user),
         profilePicture: user.profilePicture || null,
@@ -641,6 +648,7 @@ const updateProfile = async (req, res) => {
         location: locDisplay,
         locationDetails,
         isWorker: user.isWorker,
+        language: user.language || null,
         isVerified: user.isVerified,
         profilePicture: user.profilePicture || null,
         verificationStatus: verification.status,
@@ -664,6 +672,11 @@ const uploadProfilePictureHandler = async (req, res) => {
 
     if (!req.file?.buffer) {
       return res.status(400).json({ message: "Image file is required" });
+    }
+
+    const moderation = await moderateImage(req.file.buffer);
+    if (!moderation.ok) {
+      return rejectUnsafeContent(res, req.user.id, "profile-picture", moderation);
     }
 
     const profilePicture = await uploadToCloudinary(
@@ -697,6 +710,7 @@ const uploadProfilePictureHandler = async (req, res) => {
         location,
         locationDetails,
         isWorker: user.isWorker,
+        language: user.language || null,
         isVerified: user.isVerified,
         profilePicture: user.profilePicture || null,
         verificationStatus: verification.status,
@@ -737,6 +751,7 @@ const removeProfilePictureHandler = async (req, res) => {
         location,
         locationDetails,
         isWorker: user.isWorker,
+        language: user.language || null,
         isVerified: user.isVerified,
         profilePicture: null,
         verificationStatus: verification.status,
@@ -789,7 +804,26 @@ const changePassword = async (req, res) => {
   }
 };
 
+const SUPPORTED_LANGUAGES = ["en", "hi"];
+
+const updateLanguage = async (req, res) => {
+  try {
+    const language = String(req.body?.language || "").trim().toLowerCase();
+    if (!SUPPORTED_LANGUAGES.includes(language)) {
+      return res.status(400).json({ message: "Unsupported language" });
+    }
+    const result = await User.updateOne({ _id: req.user.id }, { $set: { language } });
+    if (!result.matchedCount) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    res.status(200).json({ success: true, language });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to update language" });
+  }
+};
+
 export {
+  updateLanguage,
   register,
   login,
   sendOtp,

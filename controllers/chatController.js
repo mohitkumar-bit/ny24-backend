@@ -20,6 +20,7 @@ import {
 import { assertCanMessage, hasBlockBetween } from "../utils/chatBlock.js";
 import ChatReport from "../models/ChatReport.js";
 import { isCloudinaryConfigured, uploadToCloudinary } from "../utils/cloudinary.js";
+import { moderateImage, rejectUnsafeContent } from "../utils/contentModeration.js";
 import { notifyUser, getChatMessagePreview } from "../utils/pushNotifyUser.js";
 
 export const claimChatSlot = async (req, res) => {
@@ -545,6 +546,13 @@ export const uploadChatMediaHandler = async (req, res) => {
     const isAudio = mime.startsWith("audio/") || mime === "video/webm";
     const messageType = isAudio ? "audio" : "image";
     const resourceType = isAudio ? "video" : "image";
+
+    if (!isAudio) {
+      const moderation = await moderateImage(req.file.buffer);
+      if (!moderation.ok) {
+        return rejectUnsafeContent(res, req.user.id, "chat-image", moderation);
+      }
+    }
 
     const mediaUrl = await uploadToCloudinary(
       req.file.buffer,

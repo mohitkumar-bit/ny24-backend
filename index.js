@@ -15,6 +15,7 @@ import adminRoutes from "./routes/adminRoutes.js";
 import callRequestRoutes from "./routes/callRequestRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
 import connectDB from "./utils/db.js";
+import { warmUpModeration } from "./utils/contentModeration.js";
 // import { seedCategories } from "./controllers/categoryController.js";
 // import { seedAdmin } from "./utils/seedAdmin.js";
 
@@ -62,4 +63,5 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, async () => {
     await connectDB();
     console.log(`Server is running on port ${PORT}`);
+    warmUpModeration();
 });

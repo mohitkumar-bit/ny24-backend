@@ -10,10 +10,16 @@ import {
   filterByLocality,
 } from "../utils/distance.js";
 import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.js";
+import {
+  moderateImage,
+  moderateVideo,
+  rejectUnsafeContent,
+} from "../utils/contentModeration.js";
 import { isFeaturedActive } from "../utils/featured.js";
 import { isVideoPostActive } from "../utils/videoPost.js";
 import { isBannerAdActive } from "../utils/bannerPost.js";
 import { buildInterleavedFeed } from "../utils/feedInterleave.js";
+import { filterPromosForViewer, viewerForSelectedPlace } from "../utils/promoTargeting.js";
 import { uploadVideoToS3, isS3Configured, getVideoObjectFromS3 } from "../utils/s3.js";
 import { assertVideoWithinLimit } from "../utils/videoValidation.js";
 import {
@@ -296,9 +302,9 @@ const getJobs = async (req, res) => {
     const hasBrowseCoords = Number.isFinite(browseLat) && Number.isFinite(browseLng);
 
     let query = {};
+    const selectedPlace = String(city || "").trim();
     
     if (category) query.categories = { $in: [category] };
-    if (city) query["location.city"] = new RegExp(escapeRegex(city), "i");
     if (search) {
       const searchRegex = new RegExp(escapeRegex(String(search).trim()), "i");
       const matchingCategories = await Category.find({ name: searchRegex }).select("_id");
@@ -383,16 +389,24 @@ const getJobs = async (req, res) => {
       };
     });
 
-    let filteredRanked =
+    const verifiedFiltered =
       verifiedOnly === "true"
         ? ranked.filter((j) => j.isVerifiedAuthor)
         : ranked;
+
+    let regularPosts = verifiedFiltered.filter((j) => !j.isVideoPost && !j.isBannerAd);
+    const promos = verifiedFiltered.filter((j) => j.isVideoPost || j.isBannerAd);
+    const profileLoc = currentUser?.location || {};
+
+    if (selectedPlace) {
+      const cityRegex = new RegExp(escapeRegex(selectedPlace), "i");
+      regularPosts = regularPosts.filter((j) => cityRegex.test(j.location?.city || ""));
+    }
 
     const shouldApplyNearby =
       nearby === "true" || (!search && !city && (hasBrowseCoords || locality || userCity || userState));
 
     if (shouldApplyNearby) {
-      const profileLoc = currentUser?.location || {};
       const localityTokens = collectLocalityTokens(
         locality,
         userCity,
@@ -403,14 +417,32 @@ const getJobs = async (req, res) => {
         profileLoc.address
       );
 
-      filteredRanked = filterByLocality(filteredRanked, {
+      regularPosts = filterByLocality(regularPosts, {
         userLat: browseLat,
         userLng: browseLng,
         localityTokens,
       });
     }
 
-    const feed = buildInterleavedFeed(filteredRanked);
+    // Videos target a city and banners a state: the place picked in the filter wins,
+    // then the app's selected location, then the profile location.
+    const viewer = selectedPlace
+      ? await viewerForSelectedPlace(selectedPlace, verifiedFiltered, async (place) => {
+          const match = await User.findOne({
+            "location.city": new RegExp(`^${escapeRegex(place)}$`, "i"),
+            "location.state": { $nin: [null, ""] },
+          }).select("location.state");
+          return match?.location?.state || "";
+        })
+      : {
+          city: userCity || profileLoc.city,
+          state: userState || profileLoc.state,
+          lat: hasBrowseCoords ? browseLat : null,
+          lng: hasBrowseCoords ? browseLng : null,
+        };
+    const targetedPromos = filterPromosForViewer(promos, viewer);
+
+    const feed = buildInterleavedFeed([...regularPosts, ...targetedPromos]);
     const cleanedFeed = feed.map(({ rankingScore, ...rest }) => rest);
 
     res.status(200).json(cleanedFeed);
@@ -636,6 +668,11 @@ const uploadJobImageHandler = async (req, res) => {
       return res.status(400).json({ message: "Image file is required" });
     }
 
+    const moderation = await moderateImage(req.file.buffer);
+    if (!moderation.ok) {
+      return rejectUnsafeContent(res, req.user.id, "post-image", moderation);
+    }
+
     const imageUrl = await uploadToCloudinary(
       req.file.buffer,
       req.user.id,
@@ -668,6 +705,11 @@ const uploadJobVideoHandler = async (req, res) => {
     );
     if (!durationCheck.ok) {
       return res.status(400).json({ message: durationCheck.message });
+    }
+
+    const moderation = await moderateVideo(req.file.buffer, durationCheck.duration);
+    if (!moderation.ok) {
+      return rejectUnsafeContent(res, req.user.id, "post-video", moderation);
     }
 
     const { url } = await uploadVideoToS3(

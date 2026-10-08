@@ -13,17 +13,22 @@
   "description": "",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1121.0",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.10.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.3.2",
+    "ffmpeg-static": "^5.3.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.4.1",
     "multer": "^2.1.1",
     "music-metadata": "^11.15.0",
     "nodemon": "^3.1.14",
-    "razorpay": "^2.9.8"
+    "nsfwjs": "^4.3.0",
+    "razorpay": "^2.9.8",
+    "sharp": "^0.35.5"
   }
 }
