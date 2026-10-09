@@ -15,7 +15,12 @@ import {
   moderateVideo,
   rejectUnsafeContent,
 } from "../utils/contentModeration.js";
-import { isFeaturedActive } from "../utils/featured.js";
+import {
+  isFeaturedActive,
+  isPostLive,
+  livePostFilter,
+  postLifecycleFields,
+} from "../utils/featured.js";
 import { isVideoPostActive } from "../utils/videoPost.js";
 import { isBannerAdActive } from "../utils/bannerPost.js";
 import { buildInterleavedFeed } from "../utils/feedInterleave.js";
@@ -30,6 +35,7 @@ import {
   createVideoJobFromPayload,
   createBannerJobFromPayload,
   consumeFeatureQuota,
+  consumePostQuota,
 } from "../utils/postQuota.js";
 import { createRazorpayOrder } from "../utils/razorpay.js";
 
@@ -37,10 +43,28 @@ const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function resolveIsFeatured(job, { videoActive, bannerActive }) {
-  if (!isFeaturedActive(job)) return false;
-  if (job.isBannerAd && !bannerActive) return false;
-  if (job.isVideoPost && !videoActive) return false;
-  return true;
+  if (!isPostLive(job)) return false;
+  // Video and banner promotions are paid for their own 30-day run.
+  if (job.isVideoPost || job.isBannerAd) return videoActive || bannerActive;
+  return isFeaturedActive(job);
+}
+
+function serializeJob(job) {
+  const jobObj = job.toObject ? job.toObject() : job;
+  const videoActive = isVideoPostActive(jobObj) && isPostLive(jobObj);
+  const bannerActive = isBannerAdActive(jobObj) && isPostLive(jobObj);
+  const isFeatured = resolveIsFeatured(jobObj, { videoActive, bannerActive });
+  const lifecycle = postLifecycleFields(jobObj);
+  return {
+    ...jobObj,
+    ...lifecycle,
+    featuredEndsAt: isFeatured && !videoActive && !bannerActive ? lifecycle.featuredEndsAt : null,
+    isFeatured,
+    isVideoPost: videoActive,
+    isVideoActive: videoActive,
+    isBannerAd: bannerActive,
+    isBannerActive: bannerActive,
+  };
 }
 
 const getQuota = async (req, res) => {
@@ -210,6 +234,12 @@ const createFeatureOrder = async (req, res) => {
     if (job.author.toString() !== userId) {
       return res.status(403).json({ message: "Not authorized to feature this job" });
     }
+    if (!isPostLive(job)) {
+      return res.status(400).json({
+        code: "POST_ARCHIVED",
+        message: "This post is archived. Repost it first, then boost it.",
+      });
+    }
     if (isFeaturedActive(job)) {
       return res.status(400).json({ message: "This post is already featured" });
     }
@@ -277,6 +307,54 @@ const createFeatureOrder = async (req, res) => {
   }
 };
 
+const repostJob = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const job = await JobPost.findById(req.params.id);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    if (job.author.toString() !== userId) {
+      return res.status(403).json({ message: "Not authorized to repost this job" });
+    }
+    if (isPostLive(job)) {
+      return res.status(400).json({
+        code: "POST_STILL_LIVE",
+        message: "This post is still live. You can repost it after it is archived.",
+      });
+    }
+
+    const quota = await getQuotaForUser(userId);
+    if (!quota.canPostFree) {
+      return res.status(403).json({
+        success: false,
+        code: "POST_LIMIT_REACHED",
+        plan: quota.plan,
+        used: quota.postCount,
+        limit: quota.postLimit,
+        message: `${quota.postCount}/${quota.postLimit} posts used this month. Buy an Extra Ad from the website or repost next month.`,
+      });
+    }
+
+    // A repost is a fresh 30-day run; any old boost or promotion is gone.
+    job.publishedAt = new Date();
+    job.isFeatured = false;
+    job.featuredAt = null;
+    job.isVideoPost = false;
+    job.isBannerAd = false;
+    job.status = "open";
+    await job.save();
+    await consumePostQuota(userId);
+
+    res.status(200).json({
+      success: true,
+      message: "Post is live again for 30 days",
+      job: serializeJob(job),
+    });
+  } catch (error) {
+    console.error("REPOST JOB ERROR 👉", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 const getJobs = async (req, res) => {
   try {
     const { category, city, search, verifiedOnly, nearby, locality, userCity, userState } =
@@ -323,7 +401,7 @@ const getJobs = async (req, res) => {
       }
     }
 
-    const jobs = await JobPost.find(query)
+    const jobs = await JobPost.find({ $and: [query, livePostFilter()] })
       .populate({
         path: "author",
         select: "name phone profilePicture isVerified location subscription",
@@ -378,6 +456,7 @@ const getJobs = async (req, res) => {
 
       return {
         ...job,
+        ...postLifecycleFields(job),
         distanceKm: km == null ? null : Math.round(km * 10) / 10,
         isFeatured,
         isVideoPost: videoActive,
@@ -501,17 +580,7 @@ const getJobById = async (req, res) => {
       return res.status(404).json({ message: "Job not found" });
     }
 
-    const jobObj = job.toObject ? job.toObject() : job;
-    const bannerActive = isBannerAdActive(jobObj);
-    const videoActive = isVideoPostActive(jobObj);
-    res.status(200).json({
-      ...jobObj,
-      isFeatured: resolveIsFeatured(jobObj, { videoActive, bannerActive }),
-      isVideoPost: videoActive,
-      isVideoActive: videoActive,
-      isBannerAd: bannerActive,
-      isBannerActive: bannerActive,
-    });
+    res.status(200).json(serializeJob(job));
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
@@ -524,9 +593,9 @@ const getMyJobs = async (req, res) => {
       .populate("categories", "name icon")
       .sort("-createdAt");
 
-    // Drop featured flag after 30 days so home feed and My Ads stay in sync
+    // Drop the featured flag once the boost (21 days, capped by the post's 30) ends
     const expiredFeaturedIds = jobs
-      .filter((j) => j.isFeatured && !isFeaturedActive(j))
+      .filter((j) => j.isFeatured && !j.isVideoPost && !j.isBannerAd && !isFeaturedActive(j))
       .map((j) => j._id);
     if (expiredFeaturedIds.length > 0) {
       await JobPost.updateMany(
@@ -555,21 +624,7 @@ const getMyJobs = async (req, res) => {
       );
     }
 
-    res.status(200).json(
-      jobs.map((job) => {
-        const jobObj = job.toObject ? job.toObject() : job;
-        const videoActive = isVideoPostActive(jobObj);
-        const bannerActive = isBannerAdActive(jobObj);
-        return {
-          ...jobObj,
-          isFeatured: resolveIsFeatured(jobObj, { videoActive, bannerActive }),
-          isVideoPost: videoActive,
-          isVideoActive: videoActive,
-          isBannerAd: bannerActive,
-          isBannerActive: bannerActive,
-        };
-      })
-    );
+    res.status(200).json(jobs.map(serializeJob));
   } catch (error) {
     res.status(500).json({ message: "Server error" });
   }
@@ -810,6 +865,7 @@ export {
   createBannerJob,
   createAddonOrder,
   createFeatureOrder,
+  repostJob,
   getJobs,
   streamJobVideo,
   getJobById,

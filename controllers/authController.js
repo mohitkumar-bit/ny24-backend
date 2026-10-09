@@ -96,12 +96,18 @@ const issueSessionTokens = async (user, extraFields = {}) => {
   return { accessToken, refreshToken };
 };
 
+const NAME_MAX = 25;
+const NAME_TOO_LONG_MESSAGE = `Full name must be at most ${NAME_MAX} characters`;
+
 const register = async (req, res) => {
   try {
     const { name, email, password, phone } = req.body;
 
     if (!name || !email || !password || !phone) {
       return res.status(400).json({ message: "All fields are required" });
+    }
+    if (String(name).trim().length > NAME_MAX) {
+      return res.status(400).json({ message: NAME_TOO_LONG_MESSAGE });
     }
 
     const existingUser = await User.findOne({ email });
@@ -231,6 +237,9 @@ const sendOtp = async (req, res) => {
     if (purpose === "register") {
       if (!name || !email) {
         return res.status(400).json({ message: "All fields are required" });
+      }
+      if (name.length > NAME_MAX) {
+        return res.status(400).json({ message: NAME_TOO_LONG_MESSAGE });
       }
       if (existing && isPhoneVerified(existing)) {
         return res.status(400).json({
@@ -371,6 +380,9 @@ const verifyOtp = async (req, res) => {
       const name = pending.name || String(req.body?.name || "").trim();
       if (!name) {
         return res.status(400).json({ message: "Name is required to sign up" });
+      }
+      if (name.length > NAME_MAX) {
+        return res.status(400).json({ message: NAME_TOO_LONG_MESSAGE });
       }
 
       const emailRaw =
@@ -560,6 +572,10 @@ const updateProfile = async (req, res) => {
         return res.status(400).json({
           message: "Full name is required and cannot contain numbers",
         });
+      }
+      // Older accounts may already exceed the limit; only enforce it when the name changes.
+      if (cleanName.length > NAME_MAX && cleanName !== existingUser.name) {
+        return res.status(400).json({ message: NAME_TOO_LONG_MESSAGE });
       }
     }
 

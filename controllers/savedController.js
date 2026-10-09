@@ -1,5 +1,6 @@
 import User from "../models/authModal.js";
 import JobPost from "../models/JobPost.js";
+import { isPostLive } from "../utils/featured.js";
 
 // @desc    Toggle save/unsave a job
 // @route   POST /api/saved/toggle/:jobId
@@ -60,7 +61,8 @@ export const getSavedJobs = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    res.status(200).json(user.savedJobs);
+    // Archived posts stay saved and come back if the owner reposts them.
+    res.status(200).json(user.savedJobs.filter((job) => job && isPostLive(job)));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

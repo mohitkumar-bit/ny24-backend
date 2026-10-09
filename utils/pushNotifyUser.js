@@ -54,5 +54,6 @@ export const getChatMessagePreview = (messageType, text) => {
   if (messageType === "call_request") return "You got a new call request";
   if (messageType === "image") return "You got a new message";
   if (messageType === "audio") return "You got a new message";
+  if (messageType === "location") return "Shared a location with you";
   return "You got a new message";
 };

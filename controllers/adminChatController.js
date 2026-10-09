@@ -18,6 +18,7 @@ const formatMessage = (message) => ({
   messageType: message.messageType,
   mediaUrl: message.mediaUrl,
   mediaDuration: message.mediaDuration,
+  location: message.location,
   callRequestStatus: message.callRequestStatus,
   isRead: message.isRead,
   createdAt: message.createdAt,

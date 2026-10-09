@@ -23,6 +23,19 @@ import { isCloudinaryConfigured, uploadToCloudinary } from "../utils/cloudinary.
 import { moderateImage, rejectUnsafeContent } from "../utils/contentModeration.js";
 import { notifyUser, getChatMessagePreview } from "../utils/pushNotifyUser.js";
 
+const REPLY_SNIPPET_MAX = 200;
+const LOCATION_ADDRESS_MAX = 300;
+
+function parseSharedLocation(raw) {
+  const lat = Number(raw?.lat);
+  const lng = Number(raw?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  const address =
+    typeof raw?.address === "string" ? raw.address.trim().slice(0, LOCATION_ADDRESS_MAX) : "";
+  return { lat, lng, address };
+}
+
 export const claimChatSlot = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -92,21 +105,26 @@ export const sendMessage = async (req, res) => {
       mediaUrl,
       messageType: requestedType,
       mediaDuration,
+      replyToId,
+      location: rawLocation,
     } = req.body;
     const senderId = req.user.id;
 
     const hasText = Boolean(text?.trim());
     const hasMedia = Boolean(mediaUrl?.trim());
+    const sharedLocation = parseSharedLocation(rawLocation);
 
-    if (!hasText && !hasMedia) {
+    let messageType = requestedType || (hasMedia ? "image" : "text");
+    if (!["text", "image", "audio", "location"].includes(messageType)) {
+      return res.status(400).json({ message: "Invalid message type" });
+    }
+    if (messageType === "location" && !sharedLocation) {
+      return res.status(400).json({ message: "Valid location is required" });
+    }
+    if (messageType !== "location" && !hasText && !hasMedia) {
       return res.status(400).json({
         message: "Message text or media is required",
       });
-    }
-
-    let messageType = requestedType || (hasMedia ? "image" : "text");
-    if (!["text", "image", "audio"].includes(messageType)) {
-      return res.status(400).json({ message: "Invalid message type" });
     }
     if ((messageType === "image" || messageType === "audio") && !hasMedia) {
       return res.status(400).json({ message: "Media URL is required" });
@@ -147,6 +165,22 @@ export const sendMessage = async (req, res) => {
       user = await User.findById(senderId).populate("subscription");
     }
 
+    let replyTo;
+    if (replyToId && mongoose.Types.ObjectId.isValid(replyToId)) {
+      const original = await Message.findOne({
+        _id: replyToId,
+        conversationId: targetConversationId,
+      }).select("sender text messageType");
+      if (original) {
+        replyTo = {
+          messageId: original._id,
+          sender: original.sender,
+          text: (original.text || "").slice(0, REPLY_SNIPPET_MAX),
+          messageType: original.messageType,
+        };
+      }
+    }
+
     const message = await Message.create({
       conversationId: targetConversationId,
       sender: senderId,
@@ -154,13 +188,17 @@ export const sendMessage = async (req, res) => {
       text:
         messageType === "text"
           ? text.trim()
-          : text?.trim() || "",
+          : messageType === "location"
+            ? sharedLocation.address
+            : text?.trim() || "",
       messageType,
-      mediaUrl: hasMedia ? mediaUrl.trim() : undefined,
+      location: messageType === "location" ? sharedLocation : undefined,
+      mediaUrl: hasMedia && messageType !== "location" ? mediaUrl.trim() : undefined,
       mediaDuration:
         messageType === "audio" && mediaDuration != null
           ? Number(mediaDuration)
           : undefined,
+      replyTo,
     });
 
     const now = new Date();

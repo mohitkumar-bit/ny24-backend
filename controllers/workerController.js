@@ -47,6 +47,13 @@ const assertAgeAtLeast18 = (age, res) => {
   return true;
 };
 
+const WORKER_TITLE_MAX = 21;
+
+const isTitleTooLong = (title) =>
+  typeof title === "string" && title.trim().length > WORKER_TITLE_MAX;
+
+const TITLE_TOO_LONG_MESSAGE = `Title must be at most ${WORKER_TITLE_MAX} characters`;
+
 const createWorkerProfile = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -65,6 +72,10 @@ const createWorkerProfile = async (req, res) => {
     const existingProfile = await WorkerProfile.findOne({ user: userId });
     if (existingProfile) {
       return res.status(400).json({ message: "Worker profile already exists" });
+    }
+
+    if (isTitleTooLong(title)) {
+      return res.status(400).json({ message: TITLE_TOO_LONG_MESSAGE });
     }
 
     const skillIds = normalizeSkillIds(skills);
@@ -335,6 +346,10 @@ const updateWorkerProfile = async (req, res) => {
       gender,
       interestedInLongDistance,
     } = req.body;
+
+    if (isTitleTooLong(title)) {
+      return res.status(400).json({ message: TITLE_TOO_LONG_MESSAGE });
+    }
 
     const updates = {};
 

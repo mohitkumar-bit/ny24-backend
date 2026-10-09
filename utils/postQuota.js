@@ -1,6 +1,6 @@
 import JobPost from "../models/JobPost.js";
 import User from "../models/authModal.js";
-import { isFeaturedActive } from "./featured.js";
+import { isFeaturedActive, isPostLive } from "./featured.js";
 import { getVideoExpiresAt, VIDEO_POST_PRICE_INR } from "./videoPost.js";
 import { getBannerExpiresAt, BANNER_AD_PRICE_INR } from "./bannerPost.js";
 
@@ -209,6 +209,7 @@ export function sanitizeJobFields(body) {
 }
 
 export async function createJobFromPayload(authorId, payload, { isFeatured }) {
+  const publishedAt = new Date();
   const job = await JobPost.create({
     author: authorId,
     title: payload.title,
@@ -217,8 +218,9 @@ export async function createJobFromPayload(authorId, payload, { isFeatured }) {
     price: payload.price,
     location: payload.location,
     images: payload.images || [],
+    publishedAt,
     isFeatured: Boolean(isFeatured),
-    featuredAt: isFeatured ? new Date() : null,
+    featuredAt: isFeatured ? publishedAt : null,
     requirements: payload.requirements,
   });
   await consumePostQuota(authorId);
@@ -245,6 +247,7 @@ export async function createVideoJobFromPayload(authorId, payload, videoUrl) {
     price: payload.price,
     location: payload.location,
     images: payload.images || [],
+    publishedAt,
     isFeatured: true,
     featuredAt: publishedAt,
     isVideoPost: true,
@@ -273,6 +276,7 @@ export async function createBannerJobFromPayload(authorId, payload, bannerUrl) {
     price: payload.price,
     location: payload.location,
     images: payload.images || [],
+    publishedAt,
     isFeatured: true,
     featuredAt: publishedAt,
     isBannerAd: true,
@@ -339,10 +343,17 @@ export async function fulfillAddonTransaction(transaction, { providerOrderId } =
   }
 
   if (transaction.targetJobId) {
-    await JobPost.findByIdAndUpdate(transaction.targetJobId, {
-      isFeatured: true,
-      featuredAt: new Date(),
-    });
+    const target = await JobPost.findById(transaction.targetJobId);
+    if (!target || !isPostLive(target)) {
+      // Post archived before payment finished: keep the paid boost as a credit.
+      await User.findByIdAndUpdate(transaction.user, { $inc: { extraFeatureCredits: 1 } });
+      transaction.consumedAt = new Date();
+      await transaction.save();
+      return { featuredJobId: null };
+    }
+    target.isFeatured = true;
+    target.featuredAt = new Date();
+    await target.save();
     await consumeFeatureQuota(transaction.user);
     transaction.consumedAt = new Date();
     await transaction.save();

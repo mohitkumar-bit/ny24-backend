@@ -13,6 +13,7 @@ import {
   getQuota,
   createAddonOrder,
   createFeatureOrder,
+  repostJob,
   streamJobVideo,
 } from "../controllers/jobController.js";
 import { reportPost } from "../controllers/reportController.js";
@@ -57,6 +58,7 @@ router.post("/", authMiddleware, createJob);
 router.get("/quota", authMiddleware, getQuota);
 router.post("/addon-order", authMiddleware, createAddonOrder);
 router.post("/:id/feature-order", authMiddleware, createFeatureOrder);
+router.post("/:id/repost", authMiddleware, repostJob);
 router.get("/", authMiddleware, getJobs);
 router.get("/me", authMiddleware, getMyJobs);
 router.get("/:id/video-stream", streamJobVideo);

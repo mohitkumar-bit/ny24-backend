@@ -53,6 +53,11 @@ const jobPostSchema = new mongoose.Schema(
       default: "open",
     },
     images: [String],
+    // Start of the current 30-day live window; reset on repost. Old posts fall back to createdAt.
+    publishedAt: {
+      type: Date,
+      default: null,
+    },
     isFeatured: {
       type: Boolean,
       default: false,
