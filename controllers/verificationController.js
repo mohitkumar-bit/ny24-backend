@@ -35,7 +35,7 @@ const getEligibility = async (req, res) => {
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const eligible = hasActiveBusinessPlan(user);
-    let message = "Verification is available for Business plan (₹599) subscribers only.";
+    let message = "Verification is available for Business plan (₹999) subscribers only.";
 
     if (user.isVerified) message = "Your account is already verified.";
     else if (user.verification?.status === "pending")

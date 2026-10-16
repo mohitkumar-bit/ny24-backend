@@ -3,13 +3,13 @@ import Razorpay from "razorpay";
 
 export const PLAN_PRICING = {
   pro: {
-    amountInr: 99,
+    amountInr: 199,
     months: 1,
     billingCycle: "monthly",
     label: "Pro",
   },
   business: {
-    amountInr: 599,
+    amountInr: 999,
     months: 6,
     billingCycle: "yearly",
     label: "Business",
