@@ -69,13 +69,8 @@ export function resolveJobDistanceKm(job, userLat, userLng) {
   return Math.round(distanceKm(userLat, userLng, coords[1], coords[0]) * 10) / 10;
 }
 
-export function jobMatchesLocality(job, { maxKm, userLat, userLng, localityTokens = [] }) {
-  const km =
-    job.distanceKm != null ? job.distanceKm : resolveJobDistanceKm(job, userLat, userLng);
-
-  if (km != null) return km <= maxKm;
-
-  const loc = job.location || {};
+function matchesLocalityText(item, localityTokens) {
+  const loc = item.location || {};
   const haystack = [loc.city, loc.state, loc.address, loc.district]
     .filter(Boolean)
     .join(" ")
@@ -89,13 +84,36 @@ export function jobMatchesLocality(job, { maxKm, userLat, userLng, localityToken
   });
 }
 
-/** Prefer nearby results; widen radius once if the first pass is empty. */
-export function filterByLocality(items, opts, radii = [80, 150]) {
-  for (const maxKm of radii) {
-    const filtered = items.filter((item) => jobMatchesLocality(item, { ...opts, maxKm }));
-    if (filtered.length > 0) return filtered;
+/**
+ * Orders every item nearest first without hiding any of them.
+ * Items within `scoreRadiusKm` keep their ranking-score order (distance, subscription and
+ * recency rules), farther items follow strictly by distance, and items with no known
+ * position come last unless their address matches the viewer's area.
+ * `rankingScore` is rewritten so later sorts by score keep this order.
+ */
+export function orderByProximity(items, { scoreRadiusKm, localityTokens = [] }) {
+  const near = [];
+  const far = [];
+  const unknown = [];
+
+  for (const item of items) {
+    const km = item.distanceKm;
+    if (km != null) {
+      (km <= scoreRadiusKm ? near : far).push(item);
+    } else if (matchesLocalityText(item, localityTokens)) {
+      near.push(item);
+    } else {
+      unknown.push(item);
+    }
   }
-  return [];
+
+  const byScore = (a, b) => (b.rankingScore ?? 0) - (a.rankingScore ?? 0);
+  near.sort(byScore);
+  far.sort((a, b) => a.distanceKm - b.distanceKm || byScore(a, b));
+  unknown.sort(byScore);
+
+  const ordered = [...near, ...far, ...unknown];
+  return ordered.map((item, index) => ({ ...item, rankingScore: ordered.length - index }));
 }
 
 export function sortWorkersByDistance(workers, userCoordinates) {

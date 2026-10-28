@@ -7,8 +7,11 @@ import {
   hasValidCoordinates,
   resolveWorkerCoordinates,
   collectLocalityTokens,
-  filterByLocality,
+  orderByProximity,
 } from "../utils/distance.js";
+
+/** Distance score falls to 0 at this range; farther workers are listed by distance only. */
+const WORKER_SCORE_RADIUS_KM = 30;
 
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -125,7 +128,6 @@ const getWorkers = async (req, res) => {
       interestedInLongDistance,
       minAge,
       maxAge,
-      nearby,
       locality,
       userCity,
       userState,
@@ -228,7 +230,7 @@ const getWorkers = async (req, res) => {
           : null;
 
       const distanceScore =
-        km == null ? 0.05 : Math.max(0, 1 - km / 30); // 0..1 (30km cap)
+        km == null ? 0.05 : Math.max(0, 1 - km / WORKER_SCORE_RADIUS_KM);
 
       const ratingScore = w.rating && w.rating > 0 ? w.rating / 5 : 0.5;
       const reviewsScore =
@@ -268,13 +270,10 @@ const getWorkers = async (req, res) => {
       };
     });
 
-    let nearbyRanked = ranked;
-    const shouldApplyNearby =
-      nearby === "true" || (!search && !city && (hasBrowseCoords || locality || userCity || userState));
-
-    if (shouldApplyNearby) {
-      const profileLoc = currentUser?.location || {};
-      const localityTokens = collectLocalityTokens(
+    const profileLoc = currentUser?.location || {};
+    const nearbyRanked = orderByProximity(ranked, {
+      scoreRadiusKm: WORKER_SCORE_RADIUS_KM,
+      localityTokens: collectLocalityTokens(
         locality,
         userCity,
         userState,
@@ -282,14 +281,8 @@ const getWorkers = async (req, res) => {
         profileLoc.district,
         profileLoc.state,
         profileLoc.address
-      );
-
-      nearbyRanked = filterByLocality(ranked, {
-        userLat: browseLat,
-        userLng: browseLng,
-        localityTokens,
-      });
-    }
+      ),
+    });
 
     const featured = nearbyRanked
       .filter((w) => w.isFeatured)

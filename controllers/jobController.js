@@ -7,7 +7,7 @@ import {
   distanceKm,
   hasValidCoordinates,
   collectLocalityTokens,
-  filterByLocality,
+  orderByProximity,
 } from "../utils/distance.js";
 import { uploadToCloudinary, isCloudinaryConfigured } from "../utils/cloudinary.js";
 import {
@@ -38,6 +38,9 @@ import {
   consumePostQuota,
 } from "../utils/postQuota.js";
 import { createRazorpayOrder } from "../utils/razorpay.js";
+
+/** Distance score falls to 0 at this range; farther posts are listed by distance only. */
+const JOB_SCORE_RADIUS_KM = 40;
 
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -357,8 +360,7 @@ const repostJob = async (req, res) => {
 
 const getJobs = async (req, res) => {
   try {
-    const { category, city, search, verifiedOnly, nearby, locality, userCity, userState } =
-      req.query;
+    const { category, city, search, verifiedOnly, locality, userCity, userState } = req.query;
     const userId = req.user.id;
 
     const currentUser = await User.findById(userId).select("location");
@@ -422,7 +424,7 @@ const getJobs = async (req, res) => {
           ? distanceKm(browseLat, browseLng, authorCoords[1], authorCoords[0])
           : null;
 
-      const distanceScore = km == null ? 0.05 : Math.max(0, 1 - km / 40); // 0..1 (40km cap)
+      const distanceScore = km == null ? 0.05 : Math.max(0, 1 - km / JOB_SCORE_RADIUS_KM);
 
       const authorSub = job.author?.subscription;
       const isPremium =
@@ -482,11 +484,9 @@ const getJobs = async (req, res) => {
       regularPosts = regularPosts.filter((j) => cityRegex.test(j.location?.city || ""));
     }
 
-    const shouldApplyNearby =
-      nearby === "true" || (!search && !city && (hasBrowseCoords || locality || userCity || userState));
-
-    if (shouldApplyNearby) {
-      const localityTokens = collectLocalityTokens(
+    regularPosts = orderByProximity(regularPosts, {
+      scoreRadiusKm: JOB_SCORE_RADIUS_KM,
+      localityTokens: collectLocalityTokens(
         locality,
         userCity,
         userState,
@@ -494,14 +494,8 @@ const getJobs = async (req, res) => {
         profileLoc.district,
         profileLoc.state,
         profileLoc.address
-      );
-
-      regularPosts = filterByLocality(regularPosts, {
-        userLat: browseLat,
-        userLng: browseLng,
-        localityTokens,
-      });
-    }
+      ),
+    });
 
     // Videos target a city and banners a state: the place picked in the filter wins,
     // then the app's selected location, then the profile location.
