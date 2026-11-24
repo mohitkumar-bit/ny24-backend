@@ -51,11 +51,22 @@ const assertAgeAtLeast18 = (age, res) => {
 };
 
 const WORKER_TITLE_MAX = 21;
+/** Letters + spaces only (Latin + Devanagari). */
+const WORKER_TITLE_PATTERN = /^[\p{L}\s]+$/u;
 
 const isTitleTooLong = (title) =>
   typeof title === "string" && title.trim().length > WORKER_TITLE_MAX;
 
+const isTitleInvalid = (title) => {
+  if (typeof title !== "string") return false;
+  const trimmed = title.trim();
+  if (!trimmed) return false;
+  return !WORKER_TITLE_PATTERN.test(trimmed);
+};
+
 const TITLE_TOO_LONG_MESSAGE = `Title must be at most ${WORKER_TITLE_MAX} characters`;
+const TITLE_INVALID_MESSAGE =
+  "Title can only contain letters and spaces (no numbers or special characters)";
 
 const createWorkerProfile = async (req, res) => {
   try {
@@ -80,6 +91,9 @@ const createWorkerProfile = async (req, res) => {
     if (isTitleTooLong(title)) {
       return res.status(400).json({ message: TITLE_TOO_LONG_MESSAGE });
     }
+    if (isTitleInvalid(title)) {
+      return res.status(400).json({ message: TITLE_INVALID_MESSAGE });
+    }
 
     const skillIds = normalizeSkillIds(skills);
     if (skillIds.length === 0) {
@@ -90,7 +104,7 @@ const createWorkerProfile = async (req, res) => {
 
     const workerProfile = await WorkerProfile.create({
       user: userId,
-      title,
+      title: typeof title === "string" ? title.trim() : title,
       description,
       skills: skillIds,
       experience,
@@ -343,10 +357,13 @@ const updateWorkerProfile = async (req, res) => {
     if (isTitleTooLong(title)) {
       return res.status(400).json({ message: TITLE_TOO_LONG_MESSAGE });
     }
+    if (title !== undefined && isTitleInvalid(title)) {
+      return res.status(400).json({ message: TITLE_INVALID_MESSAGE });
+    }
 
     const updates = {};
 
-    if (title !== undefined) updates.title = title;
+    if (title !== undefined) updates.title = typeof title === "string" ? title.trim() : title;
     if (description !== undefined) updates.description = description;
     if (experience !== undefined) updates.experience = experience;
     if (hourlyRate !== undefined) updates.hourlyRate = hourlyRate;

@@ -163,15 +163,21 @@ export function quoteAddon({ quota, wantFeatured, isNewPost }) {
 }
 
 export const JOB_TITLE_MAX = 20;
+/** Letters + spaces only (Latin + Devanagari). */
+const JOB_TITLE_PATTERN = /^[\p{L}\s]+$/u;
 
 export function sanitizeJobFields(body) {
   const title = typeof body?.title === "string" ? body.title.trim() : "";
   const description =
     typeof body?.description === "string" ? body.description.trim() : "";
 
-  if (!title || title.length > JOB_TITLE_MAX || /\d/.test(title)) {
+  if (
+    !title ||
+    title.length > JOB_TITLE_MAX ||
+    !JOB_TITLE_PATTERN.test(title)
+  ) {
     return {
-      error: `Title must be at most ${JOB_TITLE_MAX} characters and cannot contain numbers`,
+      error: `Title must be at most ${JOB_TITLE_MAX} characters and can only contain letters and spaces`,
     };
   }
   if (!description || description.length > 29 || /\d/.test(description)) {

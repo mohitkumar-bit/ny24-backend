@@ -10,12 +10,13 @@ const upload = multer({
       file.mimetype?.startsWith("image/") ||
       file.mimetype?.startsWith("audio/") ||
       file.mimetype === "video/webm" ||
+      file.mimetype === "application/pdf" ||
       file.mimetype === "application/octet-stream"
     ) {
       cb(null, true);
       return;
     }
-    cb(new Error("Only image or audio files are allowed"));
+    cb(new Error("Only image, audio, or PDF files are allowed"));
   },
 });
 

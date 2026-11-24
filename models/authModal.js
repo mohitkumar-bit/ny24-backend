@@ -213,6 +213,12 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+
+    /** Lifetime bill generations used on free plan (paid plans ignore this). */
+    billsGeneratedCount: {
+      type: Number,
+      default: 0,
+    },
   },
 
   { timestamps: true }

@@ -22,6 +22,11 @@ import ChatReport from "../models/ChatReport.js";
 import { isCloudinaryConfigured, uploadToCloudinary } from "../utils/cloudinary.js";
 import { moderateImage, rejectUnsafeContent } from "../utils/contentModeration.js";
 import { notifyUser, getChatMessagePreview } from "../utils/pushNotifyUser.js";
+import {
+  consumeBillQuota,
+  getBillQuotaForUser,
+  refundBillQuota,
+} from "../utils/billQuota.js";
 
 const REPLY_SNIPPET_MAX = 200;
 const LOCATION_ADDRESS_MAX = 300;
@@ -115,7 +120,7 @@ export const sendMessage = async (req, res) => {
     const sharedLocation = parseSharedLocation(rawLocation);
 
     let messageType = requestedType || (hasMedia ? "image" : "text");
-    if (!["text", "image", "audio", "location"].includes(messageType)) {
+    if (!["text", "image", "audio", "location", "file"].includes(messageType)) {
       return res.status(400).json({ message: "Invalid message type" });
     }
     if (messageType === "location" && !sharedLocation) {
@@ -126,7 +131,7 @@ export const sendMessage = async (req, res) => {
         message: "Message text or media is required",
       });
     }
-    if ((messageType === "image" || messageType === "audio") && !hasMedia) {
+    if ((messageType === "image" || messageType === "audio" || messageType === "file") && !hasMedia) {
       return res.status(400).json({ message: "Media URL is required" });
     }
     if (messageType === "text" && !hasText) {
@@ -582,10 +587,22 @@ export const uploadChatMediaHandler = async (req, res) => {
 
     const mime = req.file.mimetype || "";
     const isAudio = mime.startsWith("audio/") || mime === "video/webm";
-    const messageType = isAudio ? "audio" : "image";
-    const resourceType = isAudio ? "video" : "image";
+    const isPdf =
+      mime === "application/pdf" ||
+      (mime === "application/octet-stream" &&
+        String(req.file.originalname || "").toLowerCase().endsWith(".pdf"));
 
-    if (!isAudio) {
+    let messageType = "image";
+    let resourceType = "image";
+    if (isAudio) {
+      messageType = "audio";
+      resourceType = "video";
+    } else if (isPdf) {
+      messageType = "file";
+      resourceType = "raw";
+    }
+
+    if (messageType === "image") {
       const moderation = await moderateImage(req.file.buffer);
       if (!moderation.ok) {
         return rejectUnsafeContent(res, req.user.id, "chat-image", moderation);
@@ -603,5 +620,48 @@ export const uploadChatMediaHandler = async (req, res) => {
   } catch (error) {
     console.error("Error uploading chat media:", error);
     res.status(500).json({ message: "Failed to upload media" });
+  }
+};
+
+export const getBillQuotaHandler = async (req, res) => {
+  try {
+    const quota = await getBillQuotaForUser(req.user.id);
+    if (!quota) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    res.json(quota);
+  } catch (error) {
+    console.error("Error fetching bill quota:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const consumeBillQuotaHandler = async (req, res) => {
+  try {
+    const result = await consumeBillQuota(req.user.id);
+    if (!result.ok) {
+      return res.status(403).json({
+        message: result.message,
+        code: result.code,
+        ...result.quota,
+      });
+    }
+    res.json({ success: true, ...result.quota });
+  } catch (error) {
+    console.error("Error consuming bill quota:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const refundBillQuotaHandler = async (req, res) => {
+  try {
+    const quota = await refundBillQuota(req.user.id);
+    if (!quota) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    res.json({ success: true, ...quota });
+  } catch (error) {
+    console.error("Error refunding bill quota:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
